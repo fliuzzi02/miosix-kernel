@@ -245,7 +245,7 @@ typedef struct {
 	DWORD	clust;			/* Current cluster */
 	LBA_t	sect;			/* Current sector (0:Read operation has terminated) */
 	BYTE*	dir;			/* Pointer to the directory item in the win[] */
-	BYTE	fn[12];			/* SFN (in/out) {body[8],ext[3],status[1]} */
+	BYTE*	fn;				/* Pointer to SFN (in/out) {body[8],ext[3],status[1]} */
 	FFOBJID obj;			/* Object identifier */
 	DWORD 	dptr;			/* Current read/write offset */
 #if _USE_LFN

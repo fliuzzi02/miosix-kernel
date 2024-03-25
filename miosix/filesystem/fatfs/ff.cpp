@@ -1,18 +1,23 @@
 /*----------------------------------------------------------------------------/
-/  FatFs - FAT file system module  R0.10                 (C)ChaN, 2013
+/  FatFs - Generic FAT Filesystem Module  R0.15 w/patch3                      /
 /-----------------------------------------------------------------------------/
-/ FatFs module is a generic FAT file system module for small embedded systems.
-/ This is a free software that opened for education, research and commercial
-/ developments under license policy of following terms.
 /
-/  Copyright (C) 2013, ChaN, all right reserved.
+/ Copyright (C) 2022, ChaN, all right reserved.
 /
-/ * The FatFs module is a free software and there is NO WARRANTY.
-/ * No restriction on use. You can use, modify and redistribute it for
-/   personal, non-profit or commercial products UNDER YOUR RESPONSIBILITY.
-/ * Redistributions of source code must retain the above copyright notice.
+/ FatFs module is an open source software. Redistribution and use of FatFs in
+/ source and binary forms, with or without modification, are permitted provided
+/ that the following condition is met:
 /
-/-----------------------------------------------------------------------------/
+/ 1. Redistributions of source code must retain the above copyright notice,
+/    this condition and the following disclaimer.
+/
+/ This software is provided by the copyright holder and contributors "AS IS"
+/ and any warranties related to this software are DISCLAIMED.
+/ The copyright owner or contributors be NOT LIABLE for any damages caused
+/ by use of this software.
+/
+/---------------------------------------------------------------------------
+/
 / Feb 26,'06 R0.00  Prototype.
 /
 / Apr 29,'06 R0.01  First stable version.
@@ -104,7 +109,7 @@
 /                   Changed argument of f_chdrive(), f_mkfs(), disk_read() and disk_write().
 /                   Fixed f_write() can be truncated when the file size is close to 4GB.
 /                   Fixed f_open(), f_mkdir() and f_setlabel() can return incorrect error code.
-/---------------------------------------------------------------------------*/
+/----------------------------------------------------------------------------*/
 
 #include "ff.h"			/* Declarations of FatFs API */
 #include "diskio.h"		/* Declarations of disk I/O functions */
@@ -149,7 +154,7 @@
 
 ---------------------------------------------------------------------------*/
 
-#if _FATFS != 80960	/* Revision ID */
+#if _FATFS != 80286	/* Revision ID */
 #error Wrong include file (ff.h).
 #endif
 
@@ -164,6 +169,14 @@
 #define	SS(fs)	512U			/* Fixed sector size */
 #endif
 
+
+/* Limits and boundaries */
+#define MAX_DIR		0x200000		/* Max size of FAT directory */
+#define MAX_DIR_EX	0x10000000		/* Max size of exFAT directory */
+#define MAX_FAT12	0xFF5			/* Max FAT12 clusters (differs from specs, but right for real DOS/Windows behavior) */
+#define MAX_FAT16	0xFFF5			/* Max FAT16 clusters (differs from specs, but right for real DOS/Windows behavior) */
+#define MAX_FAT32	0x0FFFFFF5		/* Max FAT32 clusters (not specified, practical limit) */
+#define MAX_EXFAT	0x7FFFFFFD		/* Max exFAT clusters (differs from specs, implementation limit) */
 
 /* Reentrancy related */
 #if _FS_REENTRANT
@@ -382,9 +395,26 @@
 
 
 /* Character code support macros */
-#define IsUpper(c)	(((c)>='A')&&((c)<='Z'))
-#define IsLower(c)	(((c)>='a')&&((c)<='z'))
-#define IsDigit(c)	(((c)>='0')&&((c)<='9'))
+#define IsUpper(c)		(((c)>='A')&&((c)<='Z'))
+#define IsLower(c)		(((c)>='a')&&((c)<='z'))
+#define IsDigit(c)		(((c)>='0')&&((c)<='9'))
+#define IsSeparator(c)	((c) == '/' || (c) == '\\')
+#define IsTerminator(c)	((UINT)(c) < (_USE_LFN ? ' ' : '!'))
+#define IsSurrogate(c)	((c) >= 0xD800 && (c) <= 0xDFFF)
+#define IsSurrogateH(c)	((c) >= 0xD800 && (c) <= 0xDBFF)
+#define IsSurrogateL(c)	((c) >= 0xDC00 && (c) <= 0xDFFF)
+
+/* Additional file access control and file status flags for internal use */
+#define FA_SEEKEND	0x20	/* Seek to end of the file on file open */
+#define FA_MODIFIED	0x40	/* File has been modified */
+#define FA_DIRTY	0x80	/* FIL.buf[] needs to be written-back */
+
+
+/* Additional file attribute bits for internal use */
+#define AM_VOL		0x08	/* Volume label */
+#define AM_LFN		0x0F	/* LFN entry */
+#define AM_MASK		0x3F	/* Mask of defined bits in FAT */
+#define AM_MASKX	0x37	/* Mask of defined bits in exFAT */
 
 #if _DF1S		/* Code page is DBCS */
 
@@ -416,11 +446,22 @@
 #define NS_BODY		0x08	/* Lower case flag (body) */
 #define NS_EXT		0x10	/* Lower case flag (ext) */
 #define NS_DOT		0x20	/* Dot entry */
+#define NS_NOLFN	0x40	/* Do not find LFN */
+#define NS_NONAME	0x80	/* Not followed */
 
 
 /* FAT sub-type boundaries */
 #define MIN_FAT16	4086U	/* Minimum number of clusters for FAT16 */
 #define	MIN_FAT32	65526U	/* Minimum number of clusters for FAT32 */
+
+
+/* exFAT directory entry types */
+#define	ET_BITMAP	0x81	/* Allocation bitmap */
+#define	ET_UPCASE	0x82	/* Up-case table */
+#define	ET_VLABEL	0x83	/* Volume label */
+#define	ET_FILEDIR	0x85	/* File and directory */
+#define	ET_STREAM	0xC0	/* Stream extension */
+#define	ET_FILENAME	0xC1	/* Name extension */
 
 
 /* FatFs refers the members in the FAT structures as byte array instead of
@@ -442,21 +483,48 @@
 #define BPB_HiddSec			28	/* Number of special hidden sectors (4) */
 #define BPB_TotSec32		32	/* Volume size [sector] (4) */
 #define BS_DrvNum			36	/* Physical drive number (2) */
+#define BS_NTres			37	/* WindowsNT error flag (BYTE) */
 #define BS_BootSig			38	/* Extended boot signature (1) */
 #define BS_VolID			39	/* Volume serial number (4) */
 #define BS_VolLab			43	/* Volume label (8) */
 #define BS_FilSysType		54	/* File system type (1) */
-#define BPB_FATSz32			36	/* FAT size [sector] (4) */
-#define BPB_ExtFlags		40	/* Extended flags (2) */
-#define BPB_FSVer			42	/* File system version (2) */
-#define BPB_RootClus		44	/* Root directory first cluster (4) */
-#define BPB_FSInfo			48	/* Offset of FSINFO sector (2) */
-#define BPB_BkBootSec		50	/* Offset of backup boot sector (2) */
-#define BS_DrvNum32			64	/* Physical drive number (2) */
-#define BS_BootSig32		66	/* Extended boot signature (1) */
-#define BS_VolID32			67	/* Volume serial number (4) */
-#define BS_VolLab32			71	/* Volume label (8) */
-#define BS_FilSysType32		82	/* File system type (1) */
+#define BS_BootCode			62	/* Boot code (448-byte) */
+#define BS_55AA				510	/* Signature word (WORD) */
+
+#define BPB_FATSz32			36	/* FAT32: FAT size [sector] (4) */
+#define BPB_ExtFlags		40	/* FAT32: Extended flags (2) */
+#define BPB_FSVer			42	/* FAT32: File system version (2) */
+#define BPB_RootClus		44	/* FAT32: Root directory first cluster (4) */
+#define BPB_FSInfo			48	/* FAT32: Offset of FSINFO sector (2) */
+#define BPB_BkBootSec		50	/* FAT32: Offset of backup boot sector (2) */
+#define BS_DrvNum32			64	/* FAT32: Physical drive number (2) */
+#define BS_NTres32			65	/* FAT32: Error flag (BYTE) */
+#define BS_BootSig32		66	/* FAT32: Extended boot signature (1) */
+#define BS_VolID32			67	/* FAT32: Volume serial number (4) */
+#define BS_VolLab32			71	/* FAT32: Volume label (8) */
+#define BS_FilSysType32		82	/* FAT32: File system type (1) */
+#define BS_BootCode32		90		/* FAT32: Boot code (420-byte) */
+
+#define BPB_ZeroedEx		11		/* exFAT: MBZ field (53-byte) */
+#define BPB_VolOfsEx		64		/* exFAT: Volume offset from top of the drive [sector] (QWORD) */
+#define BPB_TotSecEx		72		/* exFAT: Volume size [sector] (QWORD) */
+#define BPB_FatOfsEx		80		/* exFAT: FAT offset from top of the volume [sector] (DWORD) */
+#define BPB_FatSzEx			84		/* exFAT: FAT size [sector] (DWORD) */
+#define BPB_DataOfsEx		88		/* exFAT: Data offset from top of the volume [sector] (DWORD) */
+#define BPB_NumClusEx		92		/* exFAT: Number of clusters (DWORD) */
+#define BPB_RootClusEx		96		/* exFAT: Root directory start cluster (DWORD) */
+#define BPB_VolIDEx			100		/* exFAT: Volume serial number (DWORD) */
+#define BPB_FSVerEx			104		/* exFAT: Filesystem version (WORD) */
+#define BPB_VolFlagEx		106		/* exFAT: Volume flags (WORD) */
+#define BPB_BytsPerSecEx	108		/* exFAT: Log2 of sector size in unit of byte (BYTE) */
+#define BPB_SecPerClusEx	109		/* exFAT: Log2 of cluster size in unit of sector (BYTE) */
+#define BPB_NumFATsEx		110		/* exFAT: Number of FATs (BYTE) */
+#define BPB_DrvNumEx		111		/* exFAT: Physical drive number for int13h (BYTE) */
+#define BPB_PercInUseEx		112		/* exFAT: Percent in use (BYTE) */
+#define BPB_RsvdEx			113		/* exFAT: Reserved (7-byte) */
+#define BS_BootCodeEx		120		/* exFAT: Boot code (390-byte) */
+
+
 #define	FSI_LeadSig			0	/* FSI: Leading signature (4) */
 #define	FSI_StrucSig		484	/* FSI: Structure signature (4) */
 #define	FSI_Free_Count		488	/* FSI: Number of free clusters (4) */
@@ -487,6 +555,27 @@
 #define	DDE					0xE5	/* Deleted directory entry mark in DIR_Name[0] */
 #define	NDDE				0x05	/* Replacement of the character collides with DDE */
 
+#define XDIR_Type			0		/* exFAT: Type of exFAT directory entry (BYTE) */
+#define XDIR_NumLabel		1		/* exFAT: Number of volume label characters (BYTE) */
+#define XDIR_Label			2		/* exFAT: Volume label (11-WORD) */
+#define XDIR_CaseSum		4		/* exFAT: Sum of case conversion table (DWORD) */
+#define XDIR_NumSec			1		/* exFAT: Number of secondary entries (BYTE) */
+#define XDIR_SetSum			2		/* exFAT: Sum of the set of directory entries (WORD) */
+#define XDIR_Attr			4		/* exFAT: File attribute (WORD) */
+#define XDIR_CrtTime		8		/* exFAT: Created time (DWORD) */
+#define XDIR_ModTime		12		/* exFAT: Modified time (DWORD) */
+#define XDIR_AccTime		16		/* exFAT: Last accessed time (DWORD) */
+#define XDIR_CrtTimeTenth	20		/* exFAT: Created time subsecond (BYTE) */
+#define XDIR_ModTime10		21		/* exFAT: Modified time subsecond (BYTE) */
+#define XDIR_CrtTZ			22		/* exFAT: Created timezone (BYTE) */
+#define XDIR_ModTZ			23		/* exFAT: Modified timezone (BYTE) */
+#define XDIR_AccTZ			24		/* exFAT: Last accessed timezone (BYTE) */
+#define XDIR_GenFlags		33		/* exFAT: General secondary flags (BYTE) */
+#define XDIR_NumName		35		/* exFAT: Number of file name characters (BYTE) */
+#define XDIR_NameHash		36		/* exFAT: Hash of file name (WORD) */
+#define XDIR_ValidFileSize	40		/* exFAT: Valid file size (QWORD) */
+#define XDIR_FstClus		52		/* exFAT: First cluster of the file data (DWORD) */
+#define XDIR_FileSize		56		/* exFAT: File/Directory size (QWORD) */
 
 /*------------------------------------------------------------*/
 /* Module private work area                                   */
