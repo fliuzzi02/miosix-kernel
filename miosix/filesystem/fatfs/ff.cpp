@@ -492,11 +492,11 @@
 #define BS_55AA				510	/* Signature word (WORD) */
 
 #define BPB_FATSz32			36	/* FAT32: FAT size [sector] (4) */
-#define BPB_ExtFlags		40	/* FAT32: Extended flags (2) */
-#define BPB_FSVer			42	/* FAT32: File system version (2) */
-#define BPB_RootClus		44	/* FAT32: Root directory first cluster (4) */
-#define BPB_FSInfo			48	/* FAT32: Offset of FSINFO sector (2) */
-#define BPB_BkBootSec		50	/* FAT32: Offset of backup boot sector (2) */
+#define BPB_ExtFlags32		40	/* FAT32: Extended flags (2) */
+#define BPB_FSVer32			42	/* FAT32: File system version (2) */
+#define BPB_RootClus32		44	/* FAT32: Root directory first cluster (4) */
+#define BPB_FSInfo32		48	/* FAT32: Offset of FSINFO sector (2) */
+#define BPB_BkBootSec32		50	/* FAT32: Offset of backup boot sector (2) */
 #define BS_DrvNum32			64	/* FAT32: Physical drive number (2) */
 #define BS_NTres32			65	/* FAT32: Error flag (BYTE) */
 #define BS_BootSig32		66	/* FAT32: Extended boot signature (1) */
@@ -543,6 +543,7 @@
 #define	DIR_FstClusHI		20	/* Higher 16-bit of first cluster (2) */
 #define	DIR_WrtTime			22	/* Modified time (2) */
 #define	DIR_WrtDate			24	/* Modified date (2) */
+#define DIR_ModTime			22	/* Modified time (DWORD) */
 #define	DIR_FstClusLO		26	/* Lower 16-bit of first cluster (2) */
 #define	DIR_FileSize		28	/* File size (4) */
 #define	LDIR_Ord			0	/* LFN entry order and LLE flag (1) */
@@ -576,6 +577,41 @@
 #define XDIR_ValidFileSize	40		/* exFAT: Valid file size (QWORD) */
 #define XDIR_FstClus		52		/* exFAT: First cluster of the file data (DWORD) */
 #define XDIR_FileSize		56		/* exFAT: File/Directory size (QWORD) */
+
+
+#define MBR_Table			446		/* MBR: Offset of partition table in the MBR */
+#define SZ_PTE				16		/* MBR: Size of a partition table entry */
+#define PTE_Boot			0		/* MBR PTE: Boot indicator */
+#define PTE_StHead			1		/* MBR PTE: Start head */
+#define PTE_StSec			2		/* MBR PTE: Start sector */
+#define PTE_StCyl			3		/* MBR PTE: Start cylinder */
+#define PTE_System			4		/* MBR PTE: System ID */
+#define PTE_EdHead			5		/* MBR PTE: End head */
+#define PTE_EdSec			6		/* MBR PTE: End sector */
+#define PTE_EdCyl			7		/* MBR PTE: End cylinder */
+#define PTE_StLba			8		/* MBR PTE: Start in LBA */
+#define PTE_SizLba			12		/* MBR PTE: Size in LBA */
+
+#define GPTH_Sign			0		/* GPT HDR: Signature (8-byte) */
+#define GPTH_Rev			8		/* GPT HDR: Revision (DWORD) */
+#define GPTH_Size			12		/* GPT HDR: Header size (DWORD) */
+#define GPTH_Bcc			16		/* GPT HDR: Header BCC (DWORD) */
+#define GPTH_CurLba			24		/* GPT HDR: This header LBA (QWORD) */
+#define GPTH_BakLba			32		/* GPT HDR: Another header LBA (QWORD) */
+#define GPTH_FstLba			40		/* GPT HDR: First LBA for partition data (QWORD) */
+#define GPTH_LstLba			48		/* GPT HDR: Last LBA for partition data (QWORD) */
+#define GPTH_DskGuid		56		/* GPT HDR: Disk GUID (16-byte) */
+#define GPTH_PtOfs			72		/* GPT HDR: Partition table LBA (QWORD) */
+#define GPTH_PtNum			80		/* GPT HDR: Number of table entries (DWORD) */
+#define GPTH_PteSize		84		/* GPT HDR: Size of table entry (DWORD) */
+#define GPTH_PtBcc			88		/* GPT HDR: Partition table BCC (DWORD) */
+#define SZ_GPTE				128		/* GPT PTE: Size of partition table entry */
+#define GPTE_PtGuid			0		/* GPT PTE: Partition type GUID (16-byte) */
+#define GPTE_UpGuid			16		/* GPT PTE: Partition unique GUID (16-byte) */
+#define GPTE_FstLba			32		/* GPT PTE: First LBA of partition (QWORD) */
+#define GPTE_LstLba			40		/* GPT PTE: Last LBA of partition (QWORD) */
+#define GPTE_Flags			48		/* GPT PTE: Partition flags (QWORD) */
+#define GPTE_Name			56		/* GPT PTE: Partition name */
 
 /*------------------------------------------------------------*/
 /* Module private work area                                   */
