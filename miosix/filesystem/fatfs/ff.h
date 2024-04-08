@@ -129,8 +129,10 @@ typedef struct {
 struct FATFS
 {
 	BYTE fs_type;			/* Filesystem type (0:not mounted) */
-	BYTE pdrv;				/* Volume hosting physical drive */
-	BYTE ldrv;				/* Logical drive number (used only when _FS_REENTRANT) */
+	//BYTE pdrv;				/* Volume hosting physical drive */
+	miosix::intrusive_ref_ptr<miosix::FileBase> pdrv; /* Physical drive device */
+	//BYTE ldrv;				/* Logical drive number (used only when _FS_REENTRANT) */
+	miosix::intrusive_ref_ptr<miosix::FileBase> ldrv; /* Logical drive number (used only when _FS_REENTRANT) */
 	BYTE n_fats;			/* Number of FATs (1 or 2) */
 	BYTE wflag;				/* win[] status (b0:dirty) */
 	BYTE fsi_flag;			/* FSINFO status (b7:disabled, b0:dirty) */
@@ -207,13 +209,13 @@ typedef struct
 /* File object structure (FIL) */
 
 typedef struct {
-	FATFS*	fs;				/* Pointer to the related file system object (**do not change order**) */
+	//FATFS*	fs;			// Now, FATFS*fs is wrapped by the FFOBJID obj object identifier
 	WORD	id;				/* Owner file system mount ID (**do not change order**) */
 	BYTE	flag;			/* File status flags */
 	BYTE	err;			/* Abort flag (error code) */
 	FSIZE_t fptr;			/* File read/write pointer (Zeroed on file open) */
 	DWORD	fsize;			/* File size */
-	DWORD	sclust;			/* File data start cluster (0:no data cluster, always 0 when fsize is 0) */
+	//DWORD	sclust;			// Now included in te FFOBJID
 	DWORD	clust;			/* Current cluster of fpter (invalid when fptr is 0) */
 	LBA_t	dsect;			/* Current data sector of fpter */
 	FFOBJID obj; 			/* Object identifier (must be the 1st member to detect invalid object pointer) */
@@ -238,16 +240,14 @@ typedef struct {
 /* Directory object structure (DIR) */
 
 typedef struct {
-	FATFS*	fs;				/* Pointer to the owner file system object (**do not change order**) */
-	WORD	id;				/* Owner file system mount ID (**do not change order**) */
+	FFOBJID	obj;			/* Object identifier */
+	DWORD	dptr;			/* Current read/write offset */
 	WORD	index;			/* Current read/write index number */
 	DWORD	sclust;			/* Table start cluster (0:Root dir) */
 	DWORD	clust;			/* Current cluster */
 	LBA_t	sect;			/* Current sector (0:Read operation has terminated) */
 	BYTE*	dir;			/* Pointer to the directory item in the win[] */
-	BYTE*	fn;				/* Pointer to SFN (in/out) {body[8],ext[3],status[1]} */
-	FFOBJID obj;			/* Object identifier */
-	DWORD 	dptr;			/* Current read/write offset */
+	BYTE	fn[12];			/* SFN (in/out) {body[8],ext[3],status[1]} */
 #if _USE_LFN
 	DWORD blk_ofs; /* Offset of current entry block being processed (0xFFFFFFFF:Invalid) */
 #endif
