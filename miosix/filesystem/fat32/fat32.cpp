@@ -95,7 +95,7 @@ public:
             first(true), unfinished(false)
     {
         //Make sure a closedir of an uninitialized dir won't do any damage
-        dir.fs=0;
+        dir.obj.fs=0;
         fi.lfname=lfn;
         fi.lfsize=sizeof(lfn);
     }
