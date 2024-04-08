@@ -877,8 +877,7 @@ static void st_qword (BYTE* ptr, QWORD val)	/* Store an 8-byte word in little-en
 // }
 
 /* Check if chr is contained in the string */
-static
-int chk_chr (const char* str, int chr) {
+static int chk_chr (const char* str, int chr) {
 	//while (*str && *str != chr) str++;
 	//return *str;
     char *result=strchr(str,chr);
@@ -886,9 +885,135 @@ int chk_chr (const char* str, int chr) {
     else return 0;
 }
 
+// /* Test if the byte is DBC 1st byte */
+// static int IsDBCS1 (BYTE c)
+// {
+// #if _CODE_PAGE == 0		/* Variable code page */
+// 	if (DbcTbl && c >= DbcTbl[0]) {
+// 		if (c <= DbcTbl[1]) return 1;					/* 1st byte range 1 */
+// 		if (c >= DbcTbl[2] && c <= DbcTbl[3]) return 1;	/* 1st byte range 2 */
+// 	}
+// #elif _CODE_PAGE >= 900	/* DBCS fixed code page */
+// 	if (c >= DbcTbl[0]) {
+// 		if (c <= DbcTbl[1]) return 1;
+// 		if (c >= DbcTbl[2] && c <= DbcTbl[3]) return 1;
+// 	}
+// #else						/* SBCS fixed code page */
+// 	if (c != 0) return 0;	/* Always false */
+// #endif
+// 	return 0;
+// }
+
+
+// /* Test if the byte is DBC 2nd byte */
+// static int dbc_2nd (BYTE c)
+// {
+// #if _CODE_PAGE == 0		/* Variable code page */
+// 	if (DbcTbl && c >= DbcTbl[4]) {
+// 		if (c <= DbcTbl[5]) return 1;					/* 2nd byte range 1 */
+// 		if (c >= DbcTbl[6] && c <= DbcTbl[7]) return 1;	/* 2nd byte range 2 */
+// 		if (c >= DbcTbl[8] && c <= DbcTbl[9]) return 1;	/* 2nd byte range 3 */
+// 	}
+// #elif _CODE_PAGE >= 900	/* DBCS fixed code page */
+// 	if (c >= DbcTbl[4]) {
+// 		if (c <= DbcTbl[5]) return 1;
+// 		if (c >= DbcTbl[6] && c <= DbcTbl[7]) return 1;
+// 		if (c >= DbcTbl[8] && c <= DbcTbl[9]) return 1;
+// 	}
+// #else						/* SBCS fixed code page */
+// 	if (c != 0) return 0;	/* Always false */
+// #endif
+// 	return 0;
+// }
+
 // Added by TFT -- end
 
+#if _USE_LFN
+/* Store a Unicode char in defined API encoding */
+static UINT put_utf (	/* Returns number of encoding units written (0:buffer overflow or wrong encoding) */
+	DWORD chr,	/* UTF-16 encoded character (Surrogate pair if >=0x10000) */
+	TCHAR* buf,	/* Output buffer */
+	UINT szb	/* Size of the buffer */
+)
+{
+#if _LFN_UNICODE == 1	/* UTF-16 output */
+	WCHAR hs, wc;
 
+	hs = (WCHAR)(chr >> 16);
+	wc = (WCHAR)chr;
+	if (hs == 0) {	/* Single encoding unit? */
+		if (szb < 1 || IsSurrogate(wc)) return 0;	/* Buffer overflow or wrong code? */
+		*buf = wc;
+		return 1;
+	}
+	if (szb < 2 || !IsSurrogateH(hs) || !IsSurrogateL(wc)) return 0;	/* Buffer overflow or wrong surrogate? */
+	*buf++ = hs;
+	*buf++ = wc;
+	return 2;
+
+#elif _LFN_UNICODE == 2	/* UTF-8 output */
+	DWORD hc;
+
+	if (chr < 0x80) {	/* Single byte code? */
+		if (szb < 1) return 0;	/* Buffer overflow? */
+		*buf = (TCHAR)chr;
+		return 1;
+	}
+	if (chr < 0x800) {	/* 2-byte sequence? */
+		if (szb < 2) return 0;	/* Buffer overflow? */
+		*buf++ = (TCHAR)(0xC0 | (chr >> 6 & 0x1F));
+		*buf++ = (TCHAR)(0x80 | (chr >> 0 & 0x3F));
+		return 2;
+	}
+	if (chr < 0x10000) {	/* 3-byte sequence? */
+		if (szb < 3 || IsSurrogate(chr)) return 0;	/* Buffer overflow or wrong code? */
+		*buf++ = (TCHAR)(0xE0 | (chr >> 12 & 0x0F));
+		*buf++ = (TCHAR)(0x80 | (chr >> 6 & 0x3F));
+		*buf++ = (TCHAR)(0x80 | (chr >> 0 & 0x3F));
+		return 3;
+	}
+	/* 4-byte sequence */
+	if (szb < 4) return 0;	/* Buffer overflow? */
+	hc = ((chr & 0xFFFF0000) - 0xD8000000) >> 6;	/* Get high 10 bits */
+	chr = (chr & 0xFFFF) - 0xDC00;					/* Get low 10 bits */
+	if (hc >= 0x100000 || chr >= 0x400) return 0;	/* Wrong surrogate? */
+	chr = (hc | chr) + 0x10000;
+	*buf++ = (TCHAR)(0xF0 | (chr >> 18 & 0x07));
+	*buf++ = (TCHAR)(0x80 | (chr >> 12 & 0x3F));
+	*buf++ = (TCHAR)(0x80 | (chr >> 6 & 0x3F));
+	*buf++ = (TCHAR)(0x80 | (chr >> 0 & 0x3F));
+	return 4;
+
+#elif _LFN_UNICODE == 3	/* UTF-32 output */
+	DWORD hc;
+
+	if (szb < 1) return 0;	/* Buffer overflow? */
+	if (chr >= 0x10000) {	/* Out of BMP? */
+		hc = ((chr & 0xFFFF0000) - 0xD8000000) >> 6;	/* Get high 10 bits */
+		chr = (chr & 0xFFFF) - 0xDC00;					/* Get low 10 bits */
+		if (hc >= 0x100000 || chr >= 0x400) return 0;	/* Wrong surrogate? */
+		chr = (hc | chr) + 0x10000;
+	}
+	*buf++ = (TCHAR)chr;
+	return 1;
+
+#else						/* ANSI/OEM output */
+	WCHAR wc;
+
+	//wc = ff_uni2oem(chr, CODEPAGE);
+	wc = ff_convert(chr, 0);
+	if (wc >= 0x100) {	/* Is this a DBC? */
+		if (szb < 2) return 0;
+		*buf++ = (char)(wc >> 8);	/* Store DBC 1st byte */
+		*buf++ = (TCHAR)wc;			/* Store DBC 2nd byte */
+		return 2;
+	}
+	if (wc == 0 || szb < 1) return 0;	/* Invalid char or buffer overflow? */
+	*buf++ = (TCHAR)wc;					/* Store the character */
+	return 1;
+#endif
+}
+#endif	/* _USE_LFN */
 /*-----------------------------------------------------------------------*/
 /* Request/Release grant to access the volume                            */
 /*-----------------------------------------------------------------------*/
@@ -976,10 +1101,10 @@ static FRESULT chk_share (	/* Check if the file can be accessed */
 	/* Search open object table for the object */
 	be = 0;
 	for (i = 0; i < _FS_LOCK; i++) {
-		if (dp->fs->Files[i].fs) {	/* Existing entry */
-			if (dp->fs->Files[i].fs == dp->obj.fs &&	 	/* Check if the object matches with an open object */
-				dp->fs->Files[i].clu == dp->obj.sclust &&
-				dp->fs->Files[i].idx == dp->dptr) break;
+		if (dp->obj.fs->Files[i].fs) {	/* Existing entry */
+			if (dp->obj.fs->Files[i].fs == dp->obj.fs &&	 	/* Check if the object matches with an open object */
+				dp->obj.fs->Files[i].clu == dp->obj.sclust &&
+				dp->obj.fs->Files[i].idx == dp->dptr) break;
 		} else {			/* Blank entry */
 			be = 1;
 		}
@@ -989,7 +1114,7 @@ static FRESULT chk_share (	/* Check if the file can be accessed */
 	}
 
 	/* The object was opened. Reject any open against writing file and all write mode open */
-	return (acc != 0 || dp->fs->Files[i].ctr == 0x100) ? FR_LOCKED : FR_OK;
+	return (acc != 0 || dp->obj.fs->Files[i].ctr == 0x100) ? FR_LOCKED : FR_OK;
 }
 
 
@@ -998,7 +1123,7 @@ static FRESULT chk_share (	/* Check if the file can be accessed */
 // {
 // 	UINT i;
 
-// 	for (i = 0; i < _FS_LOCK && dp->fs->Files[i].fs; i++) ;	/* Find a free entry */
+// 	for (i = 0; i < _FS_LOCK && dp->obj.fs->Files[i].fs; i++) ;	/* Find a free entry */
 // 	return (i == _FS_LOCK) ? 0 : 1;
 // }
 
@@ -1012,26 +1137,25 @@ static UINT inc_share (	/* Increment object open counter and returns its index (
 
 
 	for (i = 0; i < _FS_LOCK; i++) {	/* Find the object */
-		if (dp->fs->Files[i].fs == dp->obj.fs
-		 && dp->fs->Files[i].clu == dp->obj.sclust
-		 && dp->fs->Files[i].idx == dp->dptr) break;
+		if (dp->obj.fs->Files[i].fs == dp->obj.fs
+		 && dp->obj.fs->Files[i].clu == dp->obj.sclust
+		 && dp->obj.fs->Files[i].idx == dp->dptr) break;
 	}
 
 	if (i == _FS_LOCK) {			/* Not opened. Register it as new. */
-		for (i = 0; i < _FS_LOCK && dp->fs->Files[i].fs; i++) ;	/* Find a free entry */
+		for (i = 0; i < _FS_LOCK && dp->obj.fs->Files[i].fs; i++) ;	/* Find a free entry */
 		if (i == _FS_LOCK) return 0;	/* No free entry to register (int err) */
-		/*! TERRANEO USES DP->fs->Files and not Files...*/
-		dp->fs->Files[i].fs = dp->obj.fs;
-		dp->fs->Files[i].clu = dp->obj.sclust;
-		dp->fs->Files[i].idx = dp->dptr;
-		dp->fs->Files[i].ctr = 0;
+
+		// CHANGES: dp->obj.fs->Files and not Files static data structure
+		dp->obj.fs->Files[i].fs = dp->obj.fs;
+		dp->obj.fs->Files[i].clu = dp->obj.sclust;
+		dp->obj.fs->Files[i].idx = dp->dptr;
+		dp->obj.fs->Files[i].ctr = 0;
 	}
 
-	/*! TERRANEO dp->fs->*/
-	if (acc >= 1 && dp->fs->Files[i].ctr) return 0;	/* Access violation (int err) */
+	if (acc >= 1 && dp->obj.fs->Files[i].ctr) return 0;	/* Access violation (int err) */
 
-	/*! TERRANEO dp->fs->*/
-	dp->fs->Files[i].ctr = acc ? 0x100 : dp->fs->Files[i].ctr + 1;	/* Set semaphore value */
+	dp->obj.fs->Files[i].ctr = acc ? 0x100 : dp->obj.fs->Files[i].ctr + 1;	/* Set semaphore value */
 
 	return i + 1;	/* Index number origin from 1 */
 }
@@ -1073,8 +1197,7 @@ static void clear_share (	/* Clear all lock entries of the volume */
 	}
 }
 
-static
-FRESULT chk_lock (	/* Check if the file can be accessed */
+static FRESULT chk_lock (	/* Check if the file can be accessed */
 	DIR_* dp,		/* Directory object pointing the file to be checked */
 	int acc			/* Desired access (0:Read, 1:Write, 2:Delete/Rename) */
 )
@@ -1084,9 +1207,9 @@ FRESULT chk_lock (	/* Check if the file can be accessed */
 	/* Search file semaphore table */
 	for (i = be = 0; i < miosix::FATFS_MAX_OPEN_FILES; i++) {
 		if (dp->fs->Files[i].fs) {	/* Existing entry */
-			if (dp->fs->Files[i].fs == dp->fs &&	 	/* Check if the object matched with an open object */
-				dp->fs->Files[i].clu == dp->sclust &&
-				dp->fs->Files[i].idx == dp->index) break;
+			if (dp->obj.fs->Files[i].fs == dp->obj.fs &&	 	/* Check if the object matched with an open object */
+				dp->obj.fs->Files[i].clu == dp->obj.sclust &&
+				dp->obj.fs->Files[i].idx == dp->index) break;
 		} else {			/* Blank entry */
 			be = 1;
 		}
@@ -1095,12 +1218,11 @@ FRESULT chk_lock (	/* Check if the file can be accessed */
 		return (be || acc == 2) ? FR_OK : FR_TOO_MANY_OPEN_FILES;	/* Is there a blank entry for new object? */
 
 	/* The object has been opened. Reject any open against writing file and all write mode open */
-	return (acc || dp->fs->Files[i].ctr == 0x100) ? FR_LOCKED : FR_OK;
+	return (acc || dp->obj.fs->Files[i].ctr == 0x100) ? FR_LOCKED : FR_OK;
 }
 
 
-static
-int enq_lock (FATFS *fs)	/* Check if an entry is available for a new object */
+static int enq_lock (FATFS *fs)	/* Check if an entry is available for a new object */
 {
 	UINT i;
 
@@ -1109,8 +1231,7 @@ int enq_lock (FATFS *fs)	/* Check if an entry is available for a new object */
 }
 
 
-static
-UINT inc_lock (	/* Increment object open counter and returns its index (0:Internal error) */
+static UINT inc_lock (	/* Increment object open counter and returns its index (0:Internal error) */
 	DIR_* dp,	/* Directory object pointing the file to register or increment */
 	int acc		/* Desired access (0:Read, 1:Write, 2:Delete/Rename) */
 )
@@ -1119,23 +1240,23 @@ UINT inc_lock (	/* Increment object open counter and returns its index (0:Intern
 
 
 	for (i = 0; i < miosix::FATFS_MAX_OPEN_FILES; i++) {	/* Find the object */
-		if (dp->fs->Files[i].fs == dp->fs &&
-			dp->fs->Files[i].clu == dp->sclust &&
-			dp->fs->Files[i].idx == dp->index) break;
+		if (dp->obj.fs->Files[i].fs == dp->obj.fs &&
+			dp->obj.fs->Files[i].clu == dp->obj.sclust &&
+			dp->obj.fs->Files[i].idx == dp->index) break;
 	}
 
 	if (i == miosix::FATFS_MAX_OPEN_FILES) {				/* Not opened. Register it as new. */
-		for (i = 0; i < miosix::FATFS_MAX_OPEN_FILES && dp->fs->Files[i].fs; i++) ;
-		if (i == miosix::FATFS_MAX_OPEN_FILES) return 0;	/* No free entry to register (int err) */
-		dp->fs->Files[i].fs = dp->fs;
-		dp->fs->Files[i].clu = dp->sclust;
-		dp->fs->Files[i].idx = dp->index;
-		dp->fs->Files[i].ctr = 0;
+		for (i = 0; i < _FS_LOCK && dp->obj.fs->Files[i].fs; i++) ;
+		if (i == _FS_LOCK) return 0;	/* No free entry to register (int err) */
+		dp->obj.fs->Files[i].clu = dp->obj.sclust;
+		dp->obj.fs->Files[i].fs = dp->obj.fs;
+		dp->obj.fs->Files[i].idx = dp->index;
+		dp->obj.fs->Files[i].ctr = 0;
 	}
 
-	if (acc && dp->fs->Files[i].ctr) return 0;	/* Access violation (int err) */
+	if (acc && dp->obj.fs->Files[i].ctr) return 0;	/* Access violation (int err) */
 
-	dp->fs->Files[i].ctr = acc ? 0x100 : dp->fs->Files[i].ctr + 1;	/* Set semaphore value */
+	dp->obj.fs->Files[i].ctr = acc ? 0x100 : dp->obj.fs->Files[i].ctr + 1;	/* Set semaphore value */
 
 	return i + 1;
 }
