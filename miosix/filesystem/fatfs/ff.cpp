@@ -6582,147 +6582,315 @@ FRESULT f_fdisk (
 
 
 #if _USE_STRFUNC
+#if _USE_LFN && _LFN_UNICODE && (_STRF_ENCODE < 0 || _STRF_ENCODE > 3)
+#error Wrong _STRF_ENCODE setting
+#endif
 /*-----------------------------------------------------------------------*/
 /* Get a string from the file                                            */
 /*-----------------------------------------------------------------------*/
 
 TCHAR* f_gets (
-	TCHAR* buff,	/* Pointer to the string buffer to read */
-	int len,		/* Size of string buffer (characters) */
+	TCHAR* buff,	/* Pointer to the buffer to store read string */
+	int len,		/* Size of string buffer (items) */
 	FIL* fp			/* Pointer to the file object */
 )
 {
-	int n = 0;
-	TCHAR c, *p = buff;
-	BYTE s[2];
+	int nc = 0;
+	TCHAR *p = buff;
+	BYTE s[4];
 	UINT rc;
+	DWORD dc;
+#if _USE_LFN && _LFN_UNICODE && _STRF_ENCODE <= 2
+	WCHAR wc;
+#endif
+#if _USE_LFN && _LFN_UNICODE && _STRF_ENCODE == 3
+	UINT ct;
+#endif
 
-
-	while (n < len - 1) {	/* Read characters until buffer gets filled */
-#if _LFN_UNICODE
-#if _STRF_ENCODE == 3		/* Read a character in UTF-8 */
-		f_read(fp, s, 1, &rc);
-		if (rc != 1) break;
-		c = s[0];
-		if (c >= 0x80) {
-			if (c < 0xC0) continue;	/* Skip stray trailer */
-			if (c < 0xE0) {			/* Two-byte sequence */
-				f_read(fp, s, 1, &rc);
-				if (rc != 1) break;
-				c = (c & 0x1F) << 6 | (s[0] & 0x3F);
-				if (c < 0x80) c = '?';
-			} else {
-				if (c < 0xF0) {		/* Three-byte sequence */
-					f_read(fp, s, 2, &rc);
-					if (rc != 2) break;
-					c = c << 12 | (s[0] & 0x3F) << 6 | (s[1] & 0x3F);
-					if (c < 0x800) c = '?';
-				} else {			/* Reject four-byte sequence */
-					c = '?';
-				}
+#if _USE_LFN && _LFN_UNICODE			/* With code conversion (Unicode API) */
+	/* Make a room for the character and terminator  */
+	if (_LFN_UNICODE == 1) len -= (_STRF_ENCODE == 0) ? 1 : 2;
+	if (_LFN_UNICODE == 2) len -= (_STRF_ENCODE == 0) ? 3 : 4;
+	if (_LFN_UNICODE == 3) len -= 1;
+	while (nc < len) {
+#if _STRF_ENCODE == 0				/* Read a character in ANSI/OEM */
+		f_read(fp, s, 1, &rc);		/* Get a code unit */
+		if (rc != 1) break;			/* EOF? */
+		wc = s[0];
+		if (IsDBCS1((BYTE)wc)) {	/* DBC 1st byte? */
+			f_read(fp, s, 1, &rc);	/* Get 2nd byte */
+			if (rc != 1 || !dbc_2nd(s[0])) continue;	/* Wrong code? */
+			wc = wc << 8 | s[0];
+		}
+		//dc = ff_oem2uni(wc, CODEPAGE);	/* Convert ANSI/OEM into Unicode */
+		dc = ff_convert(wc, 1);
+		if (dc == 0) continue;		/* Conversion error? */
+#elif _STRF_ENCODE == 1 || _STRF_ENCODE == 2 	/* Read a character in UTF-16LE/BE */
+		f_read(fp, s, 2, &rc);		/* Get a code unit */
+		if (rc != 2) break;			/* EOF? */
+		dc = (_STRF_ENCODE == 1) ? ld_word(s) : s[0] << 8 | s[1];
+		if (IsSurrogateL(dc)) continue;	/* Broken surrogate pair? */
+		if (IsSurrogateH(dc)) {		/* High surrogate? */
+			f_read(fp, s, 2, &rc);	/* Get low surrogate */
+			if (rc != 2) break;		/* EOF? */
+			wc = (_STRF_ENCODE == 1) ? ld_word(s) : s[0] << 8 | s[1];
+			if (!IsSurrogateL(wc)) continue;	/* Broken surrogate pair? */
+			dc = ((dc & 0x3FF) + 0x40) << 10 | (wc & 0x3FF);	/* Merge surrogate pair */
+		}
+#else	/* Read a character in UTF-8 */
+		f_read(fp, s, 1, &rc);		/* Get a code unit */
+		if (rc != 1) break;			/* EOF? */
+		dc = s[0];
+		if (dc >= 0x80) {			/* Multi-byte sequence? */
+			ct = 0;
+			if ((dc & 0xE0) == 0xC0) {	/* 2-byte sequence? */
+				dc &= 0x1F; ct = 1;
 			}
+			if ((dc & 0xF0) == 0xE0) {	/* 3-byte sequence? */
+				dc &= 0x0F; ct = 2;
+			}
+			if ((dc & 0xF8) == 0xF0) {	/* 4-byte sequence? */
+				dc &= 0x07; ct = 3;
+			}
+			if (ct == 0) continue;
+			f_read(fp, s, ct, &rc);	/* Get trailing bytes */
+			if (rc != ct) break;
+			rc = 0;
+			do {	/* Merge the byte sequence */
+				if ((s[rc] & 0xC0) != 0x80) break;
+				dc = dc << 6 | (s[rc] & 0x3F);
+			} while (++rc < ct);
+			if (rc != ct || dc < 0x80 || IsSurrogate(dc) || dc >= 0x110000) continue;	/* Wrong encoding? */
 		}
-#elif _STRF_ENCODE == 2		/* Read a character in UTF-16BE */
-		f_read(fp, s, 2, &rc);
-		if (rc != 2) break;
-		c = s[1] + (s[0] << 8);
-#elif _STRF_ENCODE == 1		/* Read a character in UTF-16LE */
-		f_read(fp, s, 2, &rc);
-		if (rc != 2) break;
-		c = s[0] + (s[1] << 8);
-#else						/* Read a character in ANSI/OEM */
-		f_read(fp, s, 1, &rc);
-		if (rc != 1) break;
-		c = s[0];
-		if (IsDBCS1(c)) {
-			f_read(fp, s, 1, &rc);
-			if (rc != 1) break;
-			c = (c << 8) + s[0];
+#endif
+		/* A code point is avaialble in dc to be output */
+
+		if (_USE_STRFUNC == 2 && dc == '\r') continue;	/* Strip \r off if needed */
+#if _LFN_UNICODE == 1	|| _LFN_UNICODE == 3	/* Output it in UTF-16/32 encoding */
+		if (_LFN_UNICODE == 1 && dc >= 0x10000) {	/* Out of BMP at UTF-16? */
+			*p++ = (TCHAR)(0xD800 | ((dc >> 10) - 0x40)); nc++;	/* Make and output high surrogate */
+			dc = 0xDC00 | (dc & 0x3FF);		/* Make low surrogate */
 		}
-		c = ff_convert(c, 1);	/* OEM -> Unicode */
-		if (!c) c = '?';
+		*p++ = (TCHAR)dc; nc++;
+		if (dc == '\n') break;	/* End of line? */
+#elif _LFN_UNICODE == 2		/* Output it in UTF-8 encoding */
+		if (dc < 0x80) {	/* Single byte? */
+			*p++ = (TCHAR)dc;
+			nc++;
+			if (dc == '\n') break;	/* End of line? */
+		} else if (dc < 0x800) {	/* 2-byte sequence? */
+			*p++ = (TCHAR)(0xC0 | (dc >> 6 & 0x1F));
+			*p++ = (TCHAR)(0x80 | (dc >> 0 & 0x3F));
+			nc += 2;
+		} else if (dc < 0x10000) {	/* 3-byte sequence? */
+			*p++ = (TCHAR)(0xE0 | (dc >> 12 & 0x0F));
+			*p++ = (TCHAR)(0x80 | (dc >> 6 & 0x3F));
+			*p++ = (TCHAR)(0x80 | (dc >> 0 & 0x3F));
+			nc += 3;
+		} else {					/* 4-byte sequence */
+			*p++ = (TCHAR)(0xF0 | (dc >> 18 & 0x07));
+			*p++ = (TCHAR)(0x80 | (dc >> 12 & 0x3F));
+			*p++ = (TCHAR)(0x80 | (dc >> 6 & 0x3F));
+			*p++ = (TCHAR)(0x80 | (dc >> 0 & 0x3F));
+			nc += 4;
+		}
 #endif
-#else						/* Read a character without conversion */
-		f_read(fp, s, 1, &rc);
-		if (rc != 1) break;
-		c = s[0];
-#endif
-		if (_USE_STRFUNC == 2 && c == '\r') continue;	/* Strip '\r' */
-		*p++ = c;
-		n++;
-		if (c == '\n') break;		/* Break on EOL */
 	}
-	*p = 0;
-	return n ? buff : 0;			/* When no data read (eof or error), return with error. */
+
+#else			/* Byte-by-byte read without any conversion (ANSI/OEM API) */
+	len -= 1;	/* Make a room for the terminator */
+	while (nc < len) {
+		f_read(fp, s, 1, &rc);	/* Get a byte */
+		if (rc != 1) break;		/* EOF? */
+		dc = s[0];
+		if (_USE_STRFUNC == 2 && dc == '\r') continue;
+		*p++ = (TCHAR)dc; nc++;
+		if (dc == '\n') break;
+	}
+#endif
+
+	*p = 0;		/* Terminate the string */
+	return nc ? buff : 0;	/* When no data read due to EOF or error, return with error. */
 }
 
 
 
 #if !_FS_READONLY
 #include <stdarg.h>
+#define SZ_PUTC_BUF	64
+#define SZ_NUM_BUF	32
 /*-----------------------------------------------------------------------*/
 /* Put a character to the file                                           */
 /*-----------------------------------------------------------------------*/
 
+/* Output buffer and work area */
+
 typedef struct {
-	FIL* fp;
-	int idx, nchr;
-	BYTE buf[64];
+	FIL *fp;		/* Ptr to the writing file */
+	int idx, nchr;	/* Write index of buf[] (-1:error), number of encoding units written */
+#if _USE_LFN && _LFN_UNICODE == 1
+	WCHAR hs;
+#elif _USE_LFN && _LFN_UNICODE == 2
+	BYTE bs[4];
+	UINT wi, ct;
+#endif
+	BYTE buf[SZ_PUTC_BUF];	/* Write buffer */
 } putbuff;
 
 
-static
-void putc_bfd (
-	putbuff* pb,
-	TCHAR c
-)
+
+/* Buffered file write with code conversion */
+
+static void putc_bfd (putbuff* pb, TCHAR c)
 {
-	UINT bw;
-	int i;
+	UINT n;
+	int i, nc;
+#if _USE_LFN && _LFN_UNICODE
+	WCHAR hs, wc;
+#if _LFN_UNICODE == 2
+	DWORD dc;
+	const TCHAR* tp;
+#endif
+#endif
 
-
-	if (_USE_STRFUNC == 2 && c == '\n')	 /* LF -> CRLF conversion */
+	if (_USE_STRFUNC == 2 && c == '\n') {	 /* LF -> CRLF conversion */
 		putc_bfd(pb, '\r');
-
-	i = pb->idx;	/* Buffer write index (-1:error) */
-	if (i < 0) return;
-
-#if _LFN_UNICODE
-#if _STRF_ENCODE == 3			/* Write a character in UTF-8 */
-	if (c < 0x80) {				/* 7-bit */
-		pb->buf[i++] = (BYTE)c;
-	} else {
-		if (c < 0x800) {		/* 11-bit */
-			pb->buf[i++] = (BYTE)(0xC0 | c >> 6);
-		} else {				/* 16-bit */
-			pb->buf[i++] = (BYTE)(0xE0 | c >> 12);
-			pb->buf[i++] = (BYTE)(0x80 | (c >> 6 & 0x3F));
-		}
-		pb->buf[i++] = (BYTE)(0x80 | (c & 0x3F));
 	}
-#elif _STRF_ENCODE == 2			/* Write a character in UTF-16BE */
-	pb->buf[i++] = (BYTE)(c >> 8);
-	pb->buf[i++] = (BYTE)c;
-#elif _STRF_ENCODE == 1			/* Write a character in UTF-16LE */
-	pb->buf[i++] = (BYTE)c;
-	pb->buf[i++] = (BYTE)(c >> 8);
-#else							/* Write a character in ANSI/OEM */
-	c = ff_convert(c, 0);	/* Unicode -> OEM */
-	if (!c) c = '?';
-	if (c >= 0x100)
-		pb->buf[i++] = (BYTE)(c >> 8);
-	pb->buf[i++] = (BYTE)c;
+
+	i = pb->idx;			/* Write index of pb->buf[] */
+	if (i < 0) return;		/* In write error? */
+	nc = pb->nchr;			/* Write unit counter */
+
+#if _USE_LFN && _LFN_UNICODE
+#if _LFN_UNICODE == 1		/* UTF-16 input */
+	if (IsSurrogateH(c)) {	/* Is this a high-surrogate? */
+		pb->hs = c; return;	/* Save it for next */
+	}
+	hs = pb->hs; pb->hs = 0;
+	if (hs != 0) {			/* Is there a leading high-surrogate? */
+		if (!IsSurrogateL(c)) hs = 0;	/* Discard high-surrogate if not a surrogate pair */
+	} else {
+		if (IsSurrogateL(c)) return;	/* Discard stray low-surrogate */
+	}
+	wc = c;
+#elif _LFN_UNICODE == 2	/* UTF-8 input */
+	for (;;) {
+		if (pb->ct == 0) {	/* Out of multi-byte sequence? */
+			pb->bs[pb->wi = 0] = (BYTE)c;	/* Save 1st byte */
+			if ((BYTE)c < 0x80) break;					/* Single byte code? */
+			if (((BYTE)c & 0xE0) == 0xC0) pb->ct = 1;	/* 2-byte sequence? */
+			if (((BYTE)c & 0xF0) == 0xE0) pb->ct = 2;	/* 3-byte sequence? */
+			if (((BYTE)c & 0xF8) == 0xF0) pb->ct = 3;	/* 4-byte sequence? */
+			return;										/* Wrong leading byte (discard it) */
+		} else {				/* In the multi-byte sequence */
+			if (((BYTE)c & 0xC0) != 0x80) {	/* Broken sequence? */
+				pb->ct = 0; continue;		/* Discard the sequense */
+			}
+			pb->bs[++pb->wi] = (BYTE)c;	/* Save the trailing byte */
+			if (--pb->ct == 0) break;	/* End of the sequence? */
+			return;
+		}
+	}
+	tp = (const TCHAR*)pb->bs;
+	//dc = tchar2uni(&tp);			/* UTF-8 ==> UTF-16 */
+	dc = ff_convert(tp, 1)
+	if (dc == 0xFFFFFFFF) return;	/* Wrong code? */
+	hs = (WCHAR)(dc >> 16);
+	wc = (WCHAR)dc;
+#elif _LFN_UNICODE == 3	/* UTF-32 input */
+	if (IsSurrogate(c) || c >= 0x110000) return;	/* Discard invalid code */
+	if (c >= 0x10000) {		/* Out of BMP? */
+		hs = (WCHAR)(0xD800 | ((c >> 10) - 0x40)); 	/* Make high surrogate */
+		wc = 0xDC00 | (c & 0x3FF);					/* Make low surrogate */
+	} else {
+		hs = 0;
+		wc = (WCHAR)c;
+	}
 #endif
-#else							/* Write a character without conversion */
+	/* A code point in UTF-16 is available in hs and wc */
+
+#if _STRF_ENCODE == 1		/* Write a code point in UTF-16LE */
+	if (hs != 0) {	/* Surrogate pair? */
+		st_word(&pb->buf[i], hs);
+		i += 2;
+		nc++;
+	}
+	st_word(&pb->buf[i], wc);
+	i += 2;
+#elif _STRF_ENCODE == 2	/* Write a code point in UTF-16BE */
+	if (hs != 0) {	/* Surrogate pair? */
+		pb->buf[i++] = (BYTE)(hs >> 8);
+		pb->buf[i++] = (BYTE)hs;
+		nc++;
+	}
+	pb->buf[i++] = (BYTE)(wc >> 8);
+	pb->buf[i++] = (BYTE)wc;
+#elif _STRF_ENCODE == 3	/* Write a code point in UTF-8 */
+	if (hs != 0) {	/* 4-byte sequence? */
+		nc += 3;
+		hs = (hs & 0x3FF) + 0x40;
+		pb->buf[i++] = (BYTE)(0xF0 | hs >> 8);
+		pb->buf[i++] = (BYTE)(0x80 | (hs >> 2 & 0x3F));
+		pb->buf[i++] = (BYTE)(0x80 | (hs & 3) << 4 | (wc >> 6 & 0x0F));
+		pb->buf[i++] = (BYTE)(0x80 | (wc & 0x3F));
+	} else {
+		if (wc < 0x80) {	/* Single byte? */
+			pb->buf[i++] = (BYTE)wc;
+		} else {
+			if (wc < 0x800) {	/* 2-byte sequence? */
+				nc += 1;
+				pb->buf[i++] = (BYTE)(0xC0 | wc >> 6);
+			} else {			/* 3-byte sequence */
+				nc += 2;
+				pb->buf[i++] = (BYTE)(0xE0 | wc >> 12);
+				pb->buf[i++] = (BYTE)(0x80 | (wc >> 6 & 0x3F));
+			}
+			pb->buf[i++] = (BYTE)(0x80 | (wc & 0x3F));
+		}
+	}
+#else						/* Write a code point in ANSI/OEM */
+	if (hs != 0) return;
+	//wc = ff_uni2oem(wc, CODEPAGE);	/* UTF-16 ==> ANSI/OEM */
+	wc = ff_convert(wc, 0);
+	if (wc == 0) return;
+	if (wc >= 0x100) {
+		pb->buf[i++] = (BYTE)(wc >> 8); nc++;
+	}
+	pb->buf[i++] = (BYTE)wc;
+#endif
+
+#else							/* ANSI/OEM input (without re-encoding) */
 	pb->buf[i++] = (BYTE)c;
 #endif
 
-	if (i >= (int)(sizeof pb->buf) - 3) {	/* Write buffered characters to the file */
-		f_write(pb->fp, pb->buf, (UINT)i, &bw);
-		i = (bw == (UINT)i) ? 0 : -1;
+	if (i >= (int)(sizeof pb->buf) - 4) {	/* Write buffered characters to the file */
+		f_write(pb->fp, pb->buf, (UINT)i, &n);
+		i = (n == (UINT)i) ? 0 : -1;
 	}
 	pb->idx = i;
-	pb->nchr++;
+	pb->nchr = nc + 1;
+}
+
+
+/* Flush remaining characters in the buffer */
+
+static int putc_flush (putbuff* pb)
+{
+	UINT nw;
+
+	if (   pb->idx >= 0	/* Flush buffered characters to the file */
+		&& f_write(pb->fp, pb->buf, (UINT)pb->idx, &nw) == FR_OK
+		&& (UINT)pb->idx == nw) return pb->nchr;
+	return -1;
+}
+
+
+/* Initialize write buffer */
+
+static void putc_init (putbuff* pb, FIL* fp)
+{
+	memset(pb, 0, sizeof (putbuff));
+	pb->fp = fp;
 }
 
 
@@ -6733,18 +6901,11 @@ int f_putc (
 )
 {
 	putbuff pb;
-	UINT nw;
 
 
-	pb.fp = fp;			/* Initialize output buffer */
-	pb.nchr = pb.idx = 0;
-
-	putc_bfd(&pb, c);	/* Put a character */
-
-	if (   pb.idx >= 0	/* Flush buffered characters to the file */
-		&& f_write(pb.fp, pb.buf, (UINT)pb.idx, &nw) == FR_OK
-		&& (UINT)pb.idx == nw) return pb.nchr;
-	return EOF;
+	putc_init(&pb, fp);
+	putc_bfd(&pb, c);	/* Put the character */
+	return putc_flush(&pb);
 }
 
 
@@ -6760,27 +6921,143 @@ int f_puts (
 )
 {
 	putbuff pb;
-	UINT nw;
 
 
-	pb.fp = fp;				/* Initialize output buffer */
-	pb.nchr = pb.idx = 0;
-
-	while (*str)			/* Put the string */
-		putc_bfd(&pb, *str++);
-
-	if (   pb.idx >= 0		/* Flush buffered characters to the file */
-		&& f_write(pb.fp, pb.buf, (UINT)pb.idx, &nw) == FR_OK
-		&& (UINT)pb.idx == nw) return pb.nchr;
-	return EOF;
+	putc_init(&pb, fp);
+	while (*str) putc_bfd(&pb, *str++);		/* Put the string */
+	return putc_flush(&pb);
 }
 
 
 
 
+
 /*-----------------------------------------------------------------------*/
-/* Put a formatted string to the file                                    */
+/* Put a Formatted String to the File (with sub-functions)               */
 /*-----------------------------------------------------------------------*/
+#if _PRINT_FLOAT && _INTDEF == 2
+#include <math.h>
+
+static int ilog10 (double n)	/* Calculate log10(n) in integer output */
+{
+	int rv = 0;
+
+	while (n >= 10) {	/* Decimate digit in right shift */
+		if (n >= 100000) {
+			n /= 100000; rv += 5;
+		} else {
+			n /= 10; rv++;
+		}
+	}
+	while (n < 1) {		/* Decimate digit in left shift */
+		if (n < 0.00001) {
+			n *= 100000; rv -= 5;
+		} else {
+			n *= 10; rv--;
+		}
+	}
+	return rv;
+}
+
+
+static double i10x (int n)	/* Calculate 10^n in integer input */
+{
+	double rv = 1;
+
+	while (n > 0) {		/* Left shift */
+		if (n >= 5) {
+			rv *= 100000; n -= 5;
+		} else {
+			rv *= 10; n--;
+		}
+	}
+	while (n < 0) {		/* Right shift */
+		if (n <= -5) {
+			rv /= 100000; n += 5;
+		} else {
+			rv /= 10; n++;
+		}
+	}
+	return rv;
+}
+
+
+static void ftoa (
+	char* buf,	/* Buffer to output the floating point string */
+	double val,	/* Value to output */
+	int prec,	/* Number of fractional digits */
+	TCHAR fmt	/* Notation */
+)
+{
+	int d;
+	int e = 0, m = 0;
+	char sign = 0;
+	double w;
+	const char *er = 0;
+	const char ds = _PRINT_FLOAT == 2 ? ',' : '.';
+
+
+	if (isnan(val)) {			/* Not a number? */
+		er = "NaN";
+	} else {
+		if (prec < 0) prec = 6;	/* Default precision? (6 fractional digits) */
+		if (val < 0) {			/* Negative? */
+			val = 0 - val; sign = '-';
+		} else {
+			sign = '+';
+		}
+		if (isinf(val)) {		/* Infinite? */
+			er = "INF";
+		} else {
+			if (fmt == 'f') {	/* Decimal notation? */
+				val += i10x(0 - prec) / 2;	/* Round (nearest) */
+				m = ilog10(val);
+				if (m < 0) m = 0;
+				if (m + prec + 3 >= SZ_NUM_BUF) er = "OV";	/* Buffer overflow? */
+			} else {			/* E notation */
+				if (val != 0) {		/* Not a true zero? */
+					val += i10x(ilog10(val) - prec) / 2;	/* Round (nearest) */
+					e = ilog10(val);
+					if (e > 99 || prec + 7 >= SZ_NUM_BUF) {	/* Buffer overflow or E > +99? */
+						er = "OV";
+					} else {
+						if (e < -99) e = -99;
+						val /= i10x(e);	/* Normalize */
+					}
+				}
+			}
+		}
+		if (!er) {	/* Not error condition */
+			if (sign == '-') *buf++ = sign;	/* Add a - if negative value */
+			do {				/* Put decimal number */
+				if (m == -1) *buf++ = ds;	/* Insert a decimal separator when get into fractional part */
+				w = i10x(m);				/* Snip the highest digit d */
+				d = (int)(val / w); val -= d * w;
+				*buf++ = (char)('0' + d);	/* Put the digit */
+			} while (--m >= -prec);			/* Output all digits specified by prec */
+			if (fmt != 'f') {	/* Put exponent if needed */
+				*buf++ = (char)fmt;
+				if (e < 0) {
+					e = 0 - e; *buf++ = '-';
+				} else {
+					*buf++ = '+';
+				}
+				*buf++ = (char)('0' + e / 10);
+				*buf++ = (char)('0' + e % 10);
+			}
+		}
+	}
+	if (er) {	/* Error condition */
+		if (sign) *buf++ = sign;		/* Add sign if needed */
+		do {		/* Put error symbol */
+			*buf++ = *er++;
+		} while (*er);
+	}
+	*buf = 0;	/* Term */
+}
+#endif	/* _PRINT_FLOAT && _INTDEF == 2 */
+
+
 
 int f_printf (
 	FIL* fp,			/* Pointer to the file object */
@@ -6789,97 +7066,189 @@ int f_printf (
 )
 {
 	va_list arp;
-	BYTE f, r;
-	UINT nw, i, j, w;
-	DWORD v;
-	TCHAR c, d, s[16], *p;
 	putbuff pb;
+	UINT i, j, w, f, r;
+	int prec;
+#if _PRINT_LLI && _INTDEF == 2
+	QWORD v;
+#else
+	DWORD v;
+#endif
+	TCHAR *tp;
+	TCHAR tc, pad;
+	TCHAR nul = 0;
+	char d, str[SZ_NUM_BUF];
 
 
-	pb.fp = fp;				/* Initialize output buffer */
-	pb.nchr = pb.idx = 0;
+	putc_init(&pb, fp);
 
 	va_start(arp, fmt);
 
 	for (;;) {
-		c = *fmt++;
-		if (c == 0) break;			/* End of string */
-		if (c != '%') {				/* Non escape character */
-			putc_bfd(&pb, c);
+		tc = *fmt++;
+		if (tc == 0) break;			/* End of format string */
+		if (tc != '%') {			/* Not an escape character (pass-through) */
+			putc_bfd(&pb, tc);
 			continue;
 		}
-		w = f = 0;
-		c = *fmt++;
-		if (c == '0') {				/* Flag: '0' padding */
-			f = 1; c = *fmt++;
+		f = w = 0; pad = ' '; prec = -1;	/* Initialize parms */
+		tc = *fmt++;
+		if (tc == '0') {			/* Flag: '0' padded */
+			pad = '0'; tc = *fmt++;
+		} else if (tc == '-') {		/* Flag: Left aligned */
+			f = 2; tc = *fmt++;
+		}
+		if (tc == '*') {			/* Minimum width from an argument */
+			w = va_arg(arp, int);
+			tc = *fmt++;
 		} else {
-			if (c == '-') {			/* Flag: left justified */
-				f = 2; c = *fmt++;
+			while (IsDigit(tc)) {	/* Minimum width */
+				w = w * 10 + tc - '0';
+				tc = *fmt++;
 			}
 		}
-		while (IsDigit(c)) {		/* Precision */
-			w = w * 10 + c - '0';
-			c = *fmt++;
-		}
-		if (c == 'l' || c == 'L') {	/* Prefix: Size is long int */
-			f |= 4; c = *fmt++;
-		}
-		if (!c) break;
-		d = c;
-		if (IsLower(d)) d -= 0x20;
-		switch (d) {				/* Type is... */
-		case 'S' :					/* String */
-			p = va_arg(arp, TCHAR*);
-			for (j = 0; p[j]; j++) ;
-			if (!(f & 2)) {
-				while (j++ < w) putc_bfd(&pb, ' ');
+		if (tc == '.') {			/* Precision */
+			tc = *fmt++;
+			if (tc == '*') {		/* Precision from an argument */
+				prec = va_arg(arp, int);
+				tc = *fmt++;
+			} else {
+				prec = 0;
+				while (IsDigit(tc)) {	/* Precision */
+					prec = prec * 10 + tc - '0';
+					tc = *fmt++;
+				}
 			}
-			while (*p) putc_bfd(&pb, *p++);
-			while (j++ < w) putc_bfd(&pb, ' ');
-			continue;
-		case 'C' :					/* Character */
-			putc_bfd(&pb, (TCHAR)va_arg(arp, int)); continue;
-		case 'B' :					/* Binary */
+		}
+		if (tc == 'l') {			/* Size: long int */
+			f |= 4; tc = *fmt++;
+#if _PRINT_LLI && _INTDEF == 2
+			if (tc == 'l') {		/* Size: long long int */
+				f |= 8; tc = *fmt++;
+			}
+#endif
+		}
+		if (tc == 0) break;			/* End of format string */
+		switch (tc) {				/* Atgument type is... */
+		case 'b':					/* Unsigned binary */
 			r = 2; break;
-		case 'O' :					/* Octal */
+
+		case 'o':					/* Unsigned octal */
 			r = 8; break;
-		case 'D' :					/* Signed decimal */
-		case 'U' :					/* Unsigned decimal */
+
+		case 'd':					/* Signed decimal */
+		case 'u': 					/* Unsigned decimal */
 			r = 10; break;
-		case 'X' :					/* Hexdecimal */
+
+		case 'x':					/* Unsigned hexadecimal (lower case) */
+		case 'X': 					/* Unsigned hexadecimal (upper case) */
 			r = 16; break;
+
+		case 'c':					/* Character */
+			putc_bfd(&pb, (TCHAR)va_arg(arp, int));
+			continue;
+
+		case 's':					/* String */
+			tp = va_arg(arp, TCHAR*);	/* Get a pointer argument */
+			if (!tp) tp = &nul;		/* Null ptr generates a null string */
+			for (j = 0; tp[j]; j++) ;	/* j = tcslen(tp) */
+			if (prec >= 0 && j > (UINT)prec) j = prec;	/* Limited length of string body */
+			for ( ; !(f & 2) && j < w; j++) putc_bfd(&pb, pad);	/* Left pads */
+			while (*tp && prec--) putc_bfd(&pb, *tp++);	/* Body */
+			while (j++ < w) putc_bfd(&pb, ' ');			/* Right pads */
+			continue;
+#if _PRINT_FLOAT && _INTDEF == 2
+		case 'f':					/* Floating point (decimal) */
+		case 'e':					/* Floating point (e) */
+		case 'E':					/* Floating point (E) */
+			ftoa(str, va_arg(arp, double), prec, tc);	/* Make a floating point string */
+			for (j = strlen(str); !(f & 2) && j < w; j++) putc_bfd(&pb, pad);	/* Left pads */
+			for (i = 0; str[i]; putc_bfd(&pb, str[i++])) ;	/* Body */
+			while (j++ < w) putc_bfd(&pb, ' ');	/* Right pads */
+			continue;
+#endif
 		default:					/* Unknown type (pass-through) */
-			putc_bfd(&pb, c); continue;
+			putc_bfd(&pb, tc); continue;
 		}
 
-		/* Get an argument and put it in numeral */
-		v = (f & 4) ? (DWORD)va_arg(arp, long) : ((d == 'D') ? (DWORD)(long)va_arg(arp, int) : (DWORD)va_arg(arp, unsigned int));
-		if (d == 'D' && (v & 0x80000000)) {
-			v = 0 - v;
-			f |= 8;
+		/* Get an integer argument and put it in numeral */
+#if _PRINT_LLI && _INTDEF == 2
+		if (f & 8) {		/* long long argument? */
+			v = (QWORD)va_arg(arp, long long);
+		} else if (f & 4) {	/* long argument? */
+			v = (tc == 'd') ? (QWORD)(long long)va_arg(arp, long) : (QWORD)va_arg(arp, unsigned long);
+		} else {			/* int/short/char argument */
+			v = (tc == 'd') ? (QWORD)(long long)va_arg(arp, int) : (QWORD)va_arg(arp, unsigned int);
 		}
+		if (tc == 'd' && (v & 0x8000000000000000)) {	/* Negative value? */
+			v = 0 - v; f |= 1;
+		}
+#else
+		if (f & 4) {	/* long argument? */
+			v = (DWORD)va_arg(arp, long);
+		} else {		/* int/short/char argument */
+			v = (tc == 'd') ? (DWORD)(long)va_arg(arp, int) : (DWORD)va_arg(arp, unsigned int);
+		}
+		if (tc == 'd' && (v & 0x80000000)) {	/* Negative value? */
+			v = 0 - v; f |= 1;
+		}
+#endif
 		i = 0;
-		do {
-			d = (TCHAR)(v % r); v /= r;
-			if (d > 9) d += (c == 'x') ? 0x27 : 0x07;
-			s[i++] = d + '0';
-		} while (v && i < sizeof s / sizeof s[0]);
-		if (f & 8) s[i++] = '-';
-		j = i; d = (f & 1) ? '0' : ' ';
-		while (!(f & 2) && j++ < w) putc_bfd(&pb, d);
-		do putc_bfd(&pb, s[--i]); while (i);
-		while (j++ < w) putc_bfd(&pb, d);
+		do {	/* Make an integer number string */
+			d = (char)(v % r); v /= r;
+			if (d > 9) d += (tc == 'x') ? 0x27 : 0x07;
+			str[i++] = d + '0';
+		} while (v && i < SZ_NUM_BUF);
+		if (f & 1) str[i++] = '-';	/* Sign */
+		/* Write it */
+		for (j = i; !(f & 2) && j < w; j++) {	/* Left pads */
+			putc_bfd(&pb, pad);
+		}
+		do {				/* Body */
+			putc_bfd(&pb, (TCHAR)str[--i]);
+		} while (i);
+		while (j++ < w) {	/* Right pads */
+			putc_bfd(&pb, ' ');
+		}
 	}
 
 	va_end(arp);
 
-	if (   pb.idx >= 0		/* Flush buffered characters to the file */
-		&& f_write(pb.fp, pb.buf, (UINT)pb.idx, &nw) == FR_OK
-		&& (UINT)pb.idx == nw) return pb.nchr;
-	return EOF;
+	return putc_flush(&pb);
 }
 
 #endif /* !_FS_READONLY */
 #endif /* _USE_STRFUNC */
+
+
+
+#if _CODE_PAGE == 0
+/*-----------------------------------------------------------------------*/
+/* Set Active Codepage for the Path Name                                 */
+/*-----------------------------------------------------------------------*/
+
+FRESULT f_setcp (
+	WORD cp		/* Value to be set as active code page */
+)
+{
+	static const WORD       validcp[22] = {  437,   720,   737,   771,   775,   850,   852,   855,   857,   860,   861,   862,   863,   864,   865,   866,   869,   932,   936,   949,   950, 0};
+	static const BYTE *const tables[22] = {Ct437, Ct720, Ct737, Ct771, Ct775, Ct850, Ct852, Ct855, Ct857, Ct860, Ct861, Ct862, Ct863, Ct864, Ct865, Ct866, Ct869, Dc932, Dc936, Dc949, Dc950, 0};
+	UINT i;
+
+
+	for (i = 0; validcp[i] != 0 && validcp[i] != cp; i++) ;	/* Find the code page */
+	if (validcp[i] != cp) return FR_INVALID_PARAMETER;		/* Not found? */
+
+	CodePage = cp;
+	if (cp >= 900) {	/* DBCS */
+		ExCvt = 0;
+		DbcTbl = tables[i];
+	} else {			/* SBCS */
+		ExCvt = tables[i];
+		DbcTbl = 0;
+	}
+	return FR_OK;
+}
+#endif	/* _CODE_PAGE == 0 */
 
 #endif //WITH_FILESYSTEM
