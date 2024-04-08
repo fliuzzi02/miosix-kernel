@@ -632,16 +632,14 @@
 #error Number of volumes must not be 0.
 #endif
 
-static
-/*WORD*/ int Fsid;				/* File system mount ID */
+static /*WORD*/ int Fsid;				/* File system mount ID */
 
 #if _FS_RPATH != 0
 BYTE CurrVol;				/* Current drive set by f_chdrive() */
 #endif
 
 #if _FS_RPATH && _VOLUMES >= 2
-static
-BYTE CurrVol;			/* Current drive */
+static BYTE CurrVol;			/* Current drive */
 #endif
 
 #ifdef _FS_LOCK
@@ -674,12 +672,9 @@ static const BYTE GUID_MS_Basic[16] = {0xA2,0xA0,0xD0,0xEB,0xE5,0xB9,0x33,0x44,0
 #if _FS_EXFAT
 #error LFN must be enabled when enable exFAT
 #endif
-#define DEF_NAMEBUF			BYTE sfn[12]
-#define INIT_NAMBUF(dobj)	(dobj).fn = sfn
+#define DEF_NAMBUF
+#define INIT_NAMBUF(fs)
 #define FREE_NAMBUF()
-#define INIT_BUF(dobj)		(dobj).fn = sfn
-#define INIT_BUF2(dobj,fs)	(dobj).fn = sfn
-#define	FREE_BUF()
 #define LEAVE_MKFS(res)	return res
 
 #else					/* LFN configurations */
@@ -693,19 +688,16 @@ static const BYTE GUID_MS_Basic[16] = {0xA2,0xA0,0xD0,0xEB,0xE5,0xB9,0x33,0x44,0
 #error Wrong setting of _LFN_UNICODE
 #endif
 
-#define MAXDIRB(nc)	((nc + 44U) / 15 * SZDIRE)	/* exFAT: Size of directory entry block scratchpad buffer needed for the name length */
+#define MAXDIRB(nc)	((nc + 44U) / 15 * SZ_DIR)	/* exFAT: Size of directory entry block scratchpad buffer needed for the name length */
 
 #if _USE_LFN == 1		/* LFN enabled with static working buffer */
 #if _FS_EXFAT
 static BYTE	DirBuf[MAXDIRB(_MAX_LFN)];	/* Directory entry block scratchpad buffer */
 #endif
 static WCHAR LfnBuf[_MAX_LFN + 1];		/* LFN working buffer */
-#define DEF_NAMEBUF		BYTE sfn[12]
-#define INIT_NAMBUF(dobj)		{ (dobj).fn = sfn; (dobj).lfn = fs->LfnBuf; }
-#define INIT_BUF(dobj)		{ (dobj).fn = sfn; (dobj).lfn = fs->LfnBuf; }
-#define INIT_BUF2(dobj,fs)	{ (dobj).fn = sfn; (dobj).lfn = fs->LfnBuf; }
+#define DEF_NAMBUF
+#define INIT_NAMBUF(fs)
 #define FREE_NAMBUF()
-#define	FREE_BUF()
 #define LEAVE_MKFS(res)	return res
 
 #elif _USE_LFN == 2 	/* LFN enabled with dynamic working buffer on the stack */
@@ -749,8 +741,7 @@ static WCHAR LfnBuf[_MAX_LFN + 1];		/* LFN working buffer */
 
 
 #ifdef _EXCVT
-static
-const BYTE ExCvt[] = _EXCVT;	/* Upper conversion table for extended characters */
+static const BYTE ExCvt[] = _EXCVT;	/* Upper conversion table for extended characters */
 #endif
 
 
@@ -944,8 +935,7 @@ static void unlock_volume (
 	}
 }
 
-static
-int lock_fs (
+static int lock_fs (
 	FATFS* fs		/* File system object */
 )
 {
@@ -953,8 +943,7 @@ int lock_fs (
 }
 
 
-static
-void unlock_fs (
+static void unlock_fs (
 	FATFS* fs,		/* File system object */
 	FRESULT res		/* Result code to be returned */
 )
@@ -1152,8 +1141,7 @@ UINT inc_lock (	/* Increment object open counter and returns its index (0:Intern
 }
 
 
-static
-FRESULT dec_lock (	/* Decrement object open counter */
+static FRESULT dec_lock (	/* Decrement object open counter */
     FATFS *fs,
 	UINT i			/* Semaphore index (1..) */
 )
@@ -1176,8 +1164,7 @@ FRESULT dec_lock (	/* Decrement object open counter */
 }
 
 
-static
-void clear_lock (	/* Clear lock entries of the volume */
+static void clear_lock (	/* Clear lock entries of the volume */
 	FATFS *fs
 )
 {
@@ -1218,8 +1205,7 @@ static FRESULT sync_window (	/* Returns FR_OK or FR_DISK_ERR */
 #endif
 
 
-static
-FRESULT move_window (
+static FRESULT move_window (
 	FATFS* fs,		/* File system object */
 	LBA_t sect		/* Sector LBA to make appearance in the fs->win[] */
 )
@@ -1249,8 +1235,7 @@ FRESULT move_window (
 /* Synchronize file system and strage device                             */
 /*-----------------------------------------------------------------------*/
 #if !_FS_READONLY
-static
-FRESULT sync_fs (	/* FR_OK: successful, FR_DISK_ERR: failed */
+static FRESULT sync_fs (	/* FR_OK: successful, FR_DISK_ERR: failed */
 	FATFS* fs		/* File system object */
 )
 {
@@ -1559,15 +1544,14 @@ static FRESULT fill_last_frag (
 
 #endif	/* _FS_EXFAT && !_FS_READONLY */
 
-
 /*-----------------------------------------------------------------------*/
 /* FAT handling - Remove a cluster chain                                 */
 /*-----------------------------------------------------------------------*/
 #if !_FS_READONLY
-static
-FRESULT remove_chain (
-	FATFS* fs,			/* File system object */
-	DWORD clst			/* Cluster# to remove a chain from */
+static FRESULT remove_chain (	/* FR_OK(0):succeeded, !=0:error */
+	FFOBJID* obj,		/* Corresponding object */
+	DWORD clst,			/* Cluster to remove a chain from */
+	DWORD pclst			/* Previous cluster of clst (0 if entire chain) */
 )
 {
 	FRESULT res;
