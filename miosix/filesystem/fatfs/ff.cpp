@@ -3349,7 +3349,97 @@ static void get_fileinfo (
 	}
 #endif
 }
-#endif /* _FS_MINIMIZE <= 1 || _FS_RPATH >= 2*/
+#endif /* _FS_MINIMIZE <= 1 || _FS_RPATH >= 2 */
+
+
+
+/*-----------------------------------------------------------------------*/
+/* Pattern matching                                                      */
+/*-----------------------------------------------------------------------*/
+#if _USE_FIND && _FS_MINIMIZE <= 1
+#define FIND_RECURS	4	/* Maximum number of wildcard terms in the pattern to limit recursion */
+
+
+static DWORD get_achar (	/* Get a character and advance ptr */
+	const TCHAR** ptr		/* Pointer to pointer to the ANSI/OEM or Unicode string */
+)
+{
+	DWORD chr;
+
+
+#if _USE_LFN && _LFN_UNICODE >= 1	/* Unicode input */
+	//chr = tchar2uni(ptr);
+	chr = ff_convert(*ptr, 1);
+	if (chr == 0xFFFFFFFF) chr = 0;		/* Wrong UTF encoding is recognized as end of the string */
+	chr = ff_wtoupper(chr);
+
+#else									/* ANSI/OEM input */
+	chr = (BYTE)*(*ptr)++;				/* Get a byte */
+	if (IsLower(chr)) chr -= 0x20;		/* To upper ASCII char */
+#if _CODE_PAGE == 0
+	if (ExCvt && chr >= 0x80) chr = ExCvt[chr - 0x80];	/* To upper SBCS extended char */
+#elif _CODE_PAGE < 900
+	if (chr >= 0x80) chr = ExCvt[chr - 0x80];	/* To upper SBCS extended char */
+#endif
+#if _CODE_PAGE == 0 || _CODE_PAGE >= 900
+	if (IsDBCS1((BYTE)chr)) {	/* Get DBC 2nd byte if needed */
+		chr = dbc_2nd((BYTE)**ptr) ? chr << 8 | (BYTE)*(*ptr)++ : 0;
+	}
+#endif
+
+#endif
+	return chr;
+}
+
+
+static int pattern_match (	/* 0:mismatched, 1:matched */
+	const TCHAR* pat,	/* Matching pattern */
+	const TCHAR* nam,	/* String to be tested */
+	UINT skip,			/* Number of pre-skip chars (number of ?s, b8:infinite (* specified)) */
+	UINT recur			/* Recursion count */
+)
+{
+	const TCHAR *pptr;
+	const TCHAR *nptr;
+	DWORD pchr, nchr;
+	UINT sk;
+
+
+	while ((skip & 0xFF) != 0) {		/* Pre-skip name chars */
+		if (!get_achar(&nam)) return 0;	/* Branch mismatched if less name chars */
+		skip--;
+	}
+	if (*pat == 0 && skip) return 1;	/* Matched? (short circuit) */
+
+	do {
+		pptr = pat; nptr = nam;			/* Top of pattern and name to match */
+		for (;;) {
+			if (*pptr == '\?' || *pptr == '*') {	/* Wildcard term? */
+				if (recur == 0) return 0;	/* Too many wildcard terms? */
+				sk = 0;
+				do {	/* Analyze the wildcard term */
+					if (*pptr++ == '\?') {
+						sk++;
+					} else {
+						sk |= 0x100;
+					}
+				} while (*pptr == '\?' || *pptr == '*');
+				if (pattern_match(pptr, nptr, sk, recur - 1)) return 1;	/* Test new branch (recursive call) */
+				nchr = *nptr; break;	/* Branch mismatched */
+			}
+			pchr = get_achar(&pptr);	/* Get a pattern char */
+			nchr = get_achar(&nptr);	/* Get a name char */
+			if (pchr != nchr) break;	/* Branch mismatched? */
+			if (pchr == 0) return 1;	/* Branch matched? (matched at end of both strings) */
+		}
+		get_achar(&nam);			/* nam++ */
+	} while (skip && nchr);		/* Retry until end of name if infinite search is specified */
+
+	return 0;
+}
+
+#endif /* _USE_FIND && _FS_MINIMIZE <= 1 */
+
 
 
 
@@ -3358,31 +3448,78 @@ static void get_fileinfo (
 /* Get logical drive number from path name                               */
 /*-----------------------------------------------------------------------*/
 
-//By TFT: We don't want this reminiscence of microsoft OSes identifying
-//drive numbers with 0:/path/to/file
-// static
-// int get_ldnumber (		/* Returns logical drive number (-1:invalid drive) */
-// 	const TCHAR** path	/* Pointer to pointer to the path name */
+// TODO: Such code was commented due to Miosix managing such aspect?
+
+// static int get_ldnumber (	/* Returns logical drive number (-1:invalid drive number or null pointer) */
+// 	const TCHAR** path		/* Pointer to pointer to the path name */
 // )
 // {
+// 	const TCHAR *tp;
+// 	const TCHAR *tt;
+// 	TCHAR tc;
+// 	int i;
 // 	int vol = -1;
-// 
-// 
-// 	if (*path) {
-// 		vol = (*path)[0] - '0';
-// 		if ((UINT)vol < 9 && (*path)[1] == ':') {	/* There is a drive number */
-// 			*path += 2;		/* Get value and strip it */
-// 			if (vol >= _VOLUMES) vol = -1;	/* Check if the drive number is valid */
-// 		} else {			/* No drive number use default drive */
-// #if _FS_RPATH && _VOLUMES >= 2
-// 			vol = CurrVol;	/* Current drive */
-// #else
-// 			vol = 0;		/* Drive 0 */
+// #if _STR_VOLUME_ID		/* Find string volume ID */
+// 	const char *sp;
+// 	char c;
 // #endif
+
+// 	tt = tp = *path;
+// 	if (!tp) return vol;	/* Invalid path name? */
+// 	do {					/* Find a colon in the path */
+// 		tc = *tt++;
+// 	} while (!IsTerminator(tc) && tc != ':');
+
+// 	if (tc == ':') {	/* DOS/Windows style volume ID? */
+// 		i = _VOLUMES;
+// 		if (IsDigit(*tp) && tp + 2 == tt) {	/* Is there a numeric volume ID + colon? */
+// 			i = (int)*tp - '0';	/* Get the LD number */
 // 		}
+// #if _STR_VOLUME_ID == 1	/* Arbitrary string is enabled */
+// 		else {
+// 			i = 0;
+// 			do {
+// 				sp = VolumeStr[i]; tp = *path;	/* This string volume ID and path name */
+// 				do {	/* Compare the volume ID with path name */
+// 					c = *sp++; tc = *tp++;
+// 					if (IsLower(c)) c -= 0x20;
+// 					if (IsLower(tc)) tc -= 0x20;
+// 				} while (c && (TCHAR)c == tc);
+// 			} while ((c || tp != tt) && ++i < _VOLUMES);	/* Repeat for each id until pattern match */
+// 		}
+// #endif
+// 		if (i < _VOLUMES) {	/* If a volume ID is found, get the drive number and strip it */
+// 			vol = i;		/* Drive number */
+// 			*path = tt;		/* Snip the drive prefix off */
+// 		}
+// 		return vol;
 // 	}
-// 
-// 	return vol;
+// #if _STR_VOLUME_ID == 2		/* Unix style volume ID is enabled */
+// 	if (*tp == '/') {			/* Is there a volume ID? */
+// 		while (*(tp + 1) == '/') tp++;	/* Skip duplicated separator */
+// 		i = 0;
+// 		do {
+// 			tt = tp; sp = VolumeStr[i]; /* Path name and this string volume ID */
+// 			do {	/* Compare the volume ID with path name */
+// 				c = *sp++; tc = *(++tt);
+// 				if (IsLower(c)) c -= 0x20;
+// 				if (IsLower(tc)) tc -= 0x20;
+// 			} while (c && (TCHAR)c == tc);
+// 		} while ((c || (tc != '/' && !IsTerminator(tc))) && ++i < _VOLUMES);	/* Repeat for each ID until pattern match */
+// 		if (i < _VOLUMES) {	/* If a volume ID is found, get the drive number and strip it */
+// 			vol = i;		/* Drive number */
+// 			*path = tt;		/* Snip the drive prefix off */
+// 		}
+// 		return vol;
+// 	}
+// #endif
+// 	/* No drive prefix is found */
+// #if _FS_RPATH != 0
+// 	vol = CurrVol;	/* Default drive is current drive */
+// #else
+// 	vol = 0;		/* Default drive is 0 */
+// #endif
+// 	return vol;		/* Return the default drive */
 // }
 
 
@@ -3392,55 +3529,80 @@ static void get_fileinfo (
 /* Follow a file path                                                    */
 /*-----------------------------------------------------------------------*/
 
-static
-FRESULT follow_path (	/* FR_OK(0): successful, !=0: error code */
-	DIR_* dp,			/* Directory object to return last directory and found object */
-	const /*TCHAR*/char *path	/* Full-path string to find a file or directory */
+static FRESULT follow_path (	/* FR_OK(0): successful, !=0: error code */
+	DIR_* dp,					/* Directory object to return last directory and found object */
+	const TCHAR* /*char*/ path			/* Full-path string to find a file or directory */
 )
 {
 	FRESULT res;
-	BYTE *dir, ns;
+	BYTE ns;
+	FATFS *fs = dp->obj.fs;
 
 
-#if _FS_RPATH
-	if (*path == '/' || *path == '\\') {	/* There is a heading separator */
-		path++;	dp->sclust = 0;				/* Strip it and start from the root directory */
-	} else {								/* No heading separator */
-		dp->sclust = dp->fs->cdir;			/* Start from the current directory */
+#if _FS_RPATH != 0
+	if (!IsSeparator(*path) && (_STR_VOLUME_ID != 2 || !IsTerminator(*path))) {	/* Without heading separator */
+		dp->obj.sclust = fs->cdir;			/* Start at the current directory */
+	} else
+#endif
+	{										/* With heading separator */
+		while (IsSeparator(*path)) path++;	/* Strip separators */
+		dp->obj.sclust = 0;					/* Start from the root directory */
 	}
-#else
-	if (*path == '/' || *path == '\\')		/* Strip heading separator if exist */
-		path++;
-	dp->sclust = 0;							/* Always start from the root directory */
+#if _FS_EXFAT
+	dp->obj.n_frag = 0;	/* Invalidate last fragment counter of the object */
+#if _FS_RPATH != 0
+	if (fs->fs_type == FS_EXFAT && dp->obj.sclust) {	/* exFAT: Retrieve the sub-directory's status */
+		DIR_ dj;
+
+		dp->obj.c_scl = fs->cdc_scl;
+		dp->obj.c_size = fs->cdc_size;
+		dp->obj.c_ofs = fs->cdc_ofs;
+		res = load_obj_xdir(&dj, &dp->obj);
+		if (res != FR_OK) return res;
+		dp->obj.objsize = ld_dword(fs->dirbuf + XDIR_FileSize);
+		dp->obj.stat = fs->dirbuf[XDIR_GenFlags] & 2;
+	}
+#endif
 #endif
 
 	if ((UINT)*path < ' ') {				/* Null path name is the origin directory itself */
+		dp->fn[NS] = NS_NONAME;
 		res = dir_sdi(dp, 0);
-		dp->dir = 0;
+
 	} else {								/* Follow path */
 		for (;;) {
 			res = create_name(dp, &path);	/* Get a segment name of the path */
 			if (res != FR_OK) break;
-			res = dir_find(dp);				/* Find an object with the sagment name */
+			res = dir_find(dp);				/* Find an object with the segment name */
 			ns = dp->fn[NS];
 			if (res != FR_OK) {				/* Failed to find the object */
 				if (res == FR_NO_FILE) {	/* Object is not found */
-					if (_FS_RPATH && (ns & NS_DOT)) {	/* If dot entry is not exist, */
-						dp->sclust = 0; dp->dir = 0;	/* it is the root directory and stay there */
+					if (_FS_RPATH && (ns & NS_DOT)) {	/* If dot entry is not exist, stay there */
 						if (!(ns & NS_LAST)) continue;	/* Continue to follow if not last segment */
-						res = FR_OK;					/* Ended at the root directroy. Function completed. */
+						dp->fn[NS] = NS_NONAME;
+						res = FR_OK;
 					} else {							/* Could not find the object */
 						if (!(ns & NS_LAST)) res = FR_NO_PATH;	/* Adjust error code if not last segment */
 					}
 				}
 				break;
 			}
-			if (ns & NS_LAST) break;			/* Last segment matched. Function completed. */
-			dir = dp->dir;						/* Follow the sub-directory */
-			if (!(dir[DIR_Attr] & AM_DIR)) {	/* It is not a sub-directory and cannot follow */
+			if (ns & NS_LAST) break;		/* Last segment matched. Function completed. */
+			/* Get into the sub-directory */
+			if (!(dp->obj.attr & AM_DIR)) {	/* It is not a sub-directory and cannot follow */
 				res = FR_NO_PATH; break;
 			}
-			dp->sclust = ld_clust(dp->fs, dir);
+#if _FS_EXFAT
+			if (fs->fs_type == FS_EXFAT) {	/* Save containing directory information for next dir */
+				dp->obj.c_scl = dp->obj.sclust;
+				dp->obj.c_size = ((DWORD)dp->obj.objsize & 0xFFFFFF00) | dp->obj.stat;
+				dp->obj.c_ofs = dp->blk_ofs;
+				init_alloc_info(fs, &dp->obj);	/* Open next directory */
+			} else
+#endif
+			{
+				dp->obj.sclust = ld_clust(fs, fs->win + dp->dptr % SS(fs));	/* Open next directory */
+			}
 		}
 	}
 
@@ -3448,201 +3610,410 @@ FRESULT follow_path (	/* FR_OK(0): successful, !=0: error code */
 }
 
 
-
-
 /*-----------------------------------------------------------------------*/
-/* Load a sector and check if it is an FAT boot sector                   */
+/* GPT support functions                                                 */
 /*-----------------------------------------------------------------------*/
 
-static
-BYTE check_fs (	/* 0:FAT boor sector, 1:Valid boor sector but not FAT, 2:Not a boot sector, 3:Disk error */
-	FATFS* fs,	/* File system object */
-	DWORD sect	/* Sector# (lba) to check if it is an FAT boot record or not */
+#if _LBA64
+
+/* Calculate CRC32 in byte-by-byte */
+
+static DWORD crc32 (	/* Returns next CRC value */
+	DWORD crc,			/* Current CRC value */
+	BYTE d				/* A byte to be processed */
 )
 {
-	fs->wflag = 0; fs->winsect = 0xFFFFFFFF;	/* Invaidate window */
-	if (move_window(fs, sect) != FR_OK)			/* Load boot record */
-		return 3;
+	BYTE b;
 
-	if (LD_WORD(&fs->win[BS_55AA]) != 0xAA55)	/* Check boot record signature (always placed at offset 510 even if the sector size is >512) */
-		return 2;
 
-	if ((LD_DWORD(&fs->win[BS_FilSysType]) & 0xFFFFFF) == 0x544146)		/* Check "FAT" string */
-		return 0;
-	if ((LD_DWORD(&fs->win[BS_FilSysType32]) & 0xFFFFFF) == 0x544146)	/* Check "FAT" string */
-		return 0;
+	for (b = 1; b; b <<= 1) {
+		crc ^= (d & b) ? 1 : 0;
+		crc = (crc & 1) ? crc >> 1 ^ 0xEDB88320 : crc >> 1;
+	}
+	return crc;
+}
+
+
+/* Check validity of GPT header */
+
+static int test_gpt_header (	/* 0:Invalid, 1:Valid */
+	const BYTE* gpth			/* Pointer to the GPT header */
+)
+{
+	UINT i;
+	DWORD bcc, hlen;
+
+
+	if (memcmp(gpth + GPTH_Sign, "EFI PART" "\0\0\1", 12)) return 0;	/* Check signature and version (1.0) */
+	hlen = ld_dword(gpth + GPTH_Size);						/* Check header size */
+	if (hlen < 92 || hlen > _MIN_SS) return 0;
+	for (i = 0, bcc = 0xFFFFFFFF; i < hlen; i++) {			/* Check header BCC */
+		bcc = crc32(bcc, i - GPTH_Bcc < 4 ? 0 : gpth[i]);
+	}
+	if (~bcc != ld_dword(gpth + GPTH_Bcc)) return 0;
+	if (ld_dword(gpth + GPTH_PteSize) != SZ_GPTE) return 0;	/* Table entry size (must be SZ_GPTE bytes) */
+	if (ld_dword(gpth + GPTH_PtNum) > 128) return 0;		/* Table size (must be 128 entries or less) */
 
 	return 1;
 }
 
+#if !_FS_READONLY && _USE_MKFS
 
+/* Generate random value */
+static DWORD make_rand (
+	DWORD seed,		/* Seed value */
+	BYTE *buff,		/* Output buffer */
+	UINT n			/* Data length */
+)
+{
+	UINT r;
+
+
+	if (seed == 0) seed = 1;
+	do {
+		for (r = 0; r < 8; r++) seed = seed & 1 ? seed >> 1 ^ 0xA3000000 : seed >> 1;	/* Shift 8 bits the 32-bit LFSR */
+		*buff++ = (BYTE)seed;
+	} while (--n);
+	return seed;
+}
+
+#endif
+#endif
+
+
+
+
+/*-----------------------------------------------------------------------*/
+/* Load a sector and check if it is an FAT VBR                           */
+/*-----------------------------------------------------------------------*/
+
+/* Check what the sector is */
+
+static UINT check_fs (	/* 0:FAT/FAT32 VBR, 1:exFAT VBR, 2:Not FAT and valid BS, 3:Not FAT and invalid BS, 4:Disk error */
+	FATFS* fs,			/* Filesystem object */
+	LBA_t sect			/* Sector to load and check if it is an FAT-VBR or not */
+)
+{
+	WORD w, sign;
+	BYTE b;
+
+
+	fs->wflag = 0; fs->winsect = (LBA_t)0 - 1;		/* Invaidate window */
+	if (move_window(fs, sect) != FR_OK) return 4;	/* Load the boot sector */
+	sign = ld_word(fs->win + BS_55AA);
+#if _FS_EXFAT
+	if (sign == 0xAA55 && !memcmp(fs->win + BS_jmpBoot, "\xEB\x76\x90" "EXFAT   ", 11)) return 1;	/* It is an exFAT VBR */
+#endif
+	b = fs->win[BS_jmpBoot];
+	if (b == 0xEB || b == 0xE9 || b == 0xE8) {	/* Valid JumpBoot code? (short jump, near jump or near call) */
+		if (sign == 0xAA55 && !memcmp(fs->win + BS_FilSysType32, "FAT32   ", 8)) {
+			return 0;	/* It is an FAT32 VBR */
+		}
+		/* FAT volumes formatted with early MS-DOS lack BS_55AA and BS_FilSysType, so FAT VBR needs to be identified without them. */
+		w = ld_word(fs->win + BPB_BytsPerSec);
+		b = fs->win[BPB_SecPerClus];
+		if ((w & (w - 1)) == 0 && w >= _MIN_SS && w <= _MAX_SS	/* Properness of sector size (512-4096 and 2^n) */
+			&& b != 0 && (b & (b - 1)) == 0				/* Properness of cluster size (2^n) */
+			&& ld_word(fs->win + BPB_RsvdSecCnt) != 0	/* Properness of reserved sectors (MNBZ) */
+			&& (UINT)fs->win[BPB_NumFATs] - 1 <= 1		/* Properness of FATs (1 or 2) */
+			&& ld_word(fs->win + BPB_RootEntCnt) != 0	/* Properness of root dir entries (MNBZ) */
+			&& (ld_word(fs->win + BPB_TotSec16) >= 128 || ld_dword(fs->win + BPB_TotSec32) >= 0x10000)	/* Properness of volume sectors (>=128) */
+			&& ld_word(fs->win + BPB_FATSz16) != 0) {	/* Properness of FAT size (MNBZ) */
+				return 0;	/* It can be presumed an FAT VBR */
+		}
+	}
+	return sign == 0xAA55 ? 2 : 3;	/* Not an FAT VBR (valid or invalid BS) */
+}
 
 
 /*-----------------------------------------------------------------------*/
 /* Find logical drive and check if the volume is mounted                 */
 /*-----------------------------------------------------------------------*/
 
-static
-FRESULT find_volume (	/* FR_OK(0): successful, !=0: any error occurred */
-    FATFS *fs,          /* By TFT: added to get rid of static variables */
-	/*FATFS** rfs,*/		/* Pointer to pointer to the found file system object */
-	/*const TCHAR** path,*/	/* Pointer to pointer to the path name (drive number) */
-	BYTE wmode			/* !=0: Check write protection for write access */
+/* (It supports only generic partitioning rules, MBR, GPT and SFD) */
+
+// TODO: Some calls use old parameter wmode, change accordingly since now using part
+static FRESULT find_volume (	/* Returns BS status found in the hosting drive */
+	FATFS* fs,		/* Filesystem object */
+	UINT part		/* Partition to fined = 0:find as SFD and partitions, >0:forced partition number */
 )
 {
-	BYTE fmt;
+	UINT fmt, i;
+	DWORD mbr_pt[4];
+
+	/* 0:FAT/FAT32 VBR, 1:exFAT VBR, 2:Not FAT and valid BS, 3:Not FAT and invalid BS, 4:Disk error */
+	fmt = check_fs(fs, 0);				/* Load sector 0 and check if it is an FAT VBR as SFD format */
+	//if (fmt != 2 && (fmt >= 3 || part == 0)) return fmt;	/* Returns if it is an FAT VBR as auto scan, not a BS or disk error */
+	if(fmt ==4) 
+		return FR_DISK_ERR;
+	if(fmt >=2)
+		return FR_NO_FILESYSTEM;
+
+
+	/* Sector 0 is not an FAT VBR or forced partition number wants a partition */
+
+#if _LBA64
+	if (fs->win[MBR_Table + PTE_System] == 0xEE) {	/* GPT protective MBR? */
+		DWORD n_ent, v_ent, ofs;
+		QWORD pt_lba;
+
+		if (move_window(fs, 1) != FR_OK) return 4;	/* Load GPT header sector (next to MBR) */
+		if (!test_gpt_header(fs->win)) return 3;	/* Check if GPT header is valid */
+		n_ent = ld_dword(fs->win + GPTH_PtNum);		/* Number of entries */
+		pt_lba = ld_qword(fs->win + GPTH_PtOfs);	/* Table location */
+		for (v_ent = i = 0; i < n_ent; i++) {		/* Find FAT partition */
+			if (move_window(fs, pt_lba + i * SZ_GPTE / SS(fs)) != FR_OK) return 4;	/* PT sector */
+			ofs = i * SZ_GPTE % SS(fs);												/* Offset in the sector */
+			if (!memcmp(fs->win + ofs + GPTE_PtGuid, GUID_MS_Basic, 16)) {	/* MS basic data partition? */
+				v_ent++;
+				fmt = check_fs(fs, ld_qword(fs->win + ofs + GPTE_FstLba));	/* Load VBR and check status */
+				if (part == 0 && fmt <= 1) return fmt;			/* Auto search (valid FAT volume found first) */
+				if (part != 0 && v_ent == part) return fmt;		/* Forced partition order (regardless of it is valid or not) */
+			}
+		}
+		return 3;	/* Not found */
+	}
+
+#endif
+	if (_MULTI_PARTITION && part > 4);	/* MBR has 4 partitions max */
+	for (i = 0; i < 4; i++) {		/* Load partition offset in the MBR */
+		mbr_pt[i] = ld_dword(fs->win + MBR_Table + i * SZ_PTE + PTE_StLba);
+	}
+	i = part ? part - 1 : 0;		/* Table index to find first */
+	do {							/* Find an FAT volume */
+		fmt = mbr_pt[i] ? check_fs(fs, mbr_pt[i]) : 3;	/* Check if the partition is FAT */
+	} while (part == 0 && fmt >= 2 && ++i < 4);
+	return fmt;
+}
+
+
+/*-----------------------------------------------------------------------*/
+/* Determine logical drive number and mount the volume if needed         */
+/*-----------------------------------------------------------------------*/
+
+static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
+	const TCHAR** path,			/* Pointer to pointer to the path name (drive number) */
+	FATFS** rfs,				/* Pointer to pointer to the found filesystem object */
+	BYTE mode					/* Desiered access mode to check write protection */
+)
+{
 	int vol;
+	FATFS *fs;
 	DSTATUS stat;
-	DWORD bsect, fasize, tsect, sysect, nclst, szbfat;
+	LBA_t bsect;
+	DWORD tsect, sysect, fasize, nclst, szbfat;
 	WORD nrsv;
-	//FATFS *fs;
+	UINT fmt;
 
 
-	/* Get logical drive number from the path name */
-	//*rfs = 0;
+	/* Get logical drive number */
+	*rfs = 0;
 	vol = 0;//get_ldnumber(path);
 	if (vol < 0) return FR_INVALID_DRIVE;
 
-	/* Check if the file system object is valid or not */
-	//fs = FatFs[vol];					/* Get pointer to the file system object */
-	if (!fs) return FR_NOT_ENABLED;		/* Is the file system object available? */
-
-	ENTER_FF(fs);						/* Lock the volume */
-	//*rfs = fs;							/* Return pointer to the file system object */
-
-	if (fs->fs_type) {					/* If the volume has been mounted */
-		stat = RES_OK;//disk_status(fs->drv);
-		if (!(stat & STA_NOINIT)) {		/* and the physical drive is kept initialized */
-			if (!_FS_READONLY && wmode && (stat & STA_PROTECT))	/* Check write protection if needed */
-				return FR_WRITE_PROTECTED;
-			return FR_OK;				/* The file system object is valid */
-		}
-	}
-
-	/* The file system object is not valid. */
-	/* Following code attempts to mount the volume. (analyze BPB and initialize the fs object) */
-
-	fs->fs_type = 0;					/* Clear the file system object */
-	//fs->drv = LD2PD(vol);				/* Bind the logical drive and a physical drive */
-	stat = RES_OK;//disk_initialize(fs->drv);	/* Initialize the physical drive */
-	if (stat & STA_NOINIT)				/* Check if the initialization succeeded */
-		return FR_NOT_READY;			/* Failed to initialize due to no medium or hard error */
-	if (!_FS_READONLY && wmode && (stat & STA_PROTECT))	/* Check disk write protection if needed */
-		return FR_WRITE_PROTECTED;
-#if _MAX_SS != 512						/* Get sector size (variable sector size cfg only) */
-	if (disk_ioctl(fs->drv, GET_SECTOR_SIZE, &fs->ssize) != RES_OK)
-		return FR_DISK_ERR;
+	/* Check if the filesystem object is valid or not */
+	//fs = FatFs[vol];					/* Get pointer to the filesystem object */
+	if (!fs) return FR_NOT_ENABLED;		/* Is the filesystem object available? */
+#if _FS_REENTRANT
+	if (!lock_volume(fs, 1)) return FR_TIMEOUT;	/* Lock the volume, and system if needed */
 #endif
-	/* Find an FAT partition on the drive. Supports only generic partitioning, FDISK and SFD. */
-	bsect = 0;
-	fmt = check_fs(fs, bsect);					/* Load sector 0 and check if it is an FAT boot sector as SFD */
-	if (fmt == 1 || (!fmt && (LD2PT(vol)))) {	/* Not an FAT boot sector or forced partition number */
-		UINT i;
-		DWORD br[4];
+	*rfs = fs;							/* Return pointer to the filesystem object */
 
-		for (i = 0; i < 4; i++) {			/* Get partition offset */
-			BYTE *pt = fs->win+MBR_Table + i * SZ_PTE;
-			br[i] = pt[4] ? LD_DWORD(&pt[8]) : 0;
+	mode &= (BYTE)~FA_READ;				/* Desired access mode, write access or not */
+	if (fs->fs_type != 0) {				/* If the volume has been mounted */
+		stat = disk_status(fs->pdrv);
+		if (!(stat & STA_NOINIT)) {		/* and the physical drive is kept initialized */
+			if (!_FS_READONLY && mode && (stat & STA_PROTECT)) {	/* Check write protection if needed */
+				return FR_WRITE_PROTECTED;
+			}
+			return FR_OK;				/* The filesystem object is already valid */
 		}
-		i = LD2PT(vol);						/* Partition number: 0:auto, 1-4:forced */
-		if (i) i--;
-		do {								/* Find an FAT volume */
-			bsect = br[i];
-			fmt = bsect ? check_fs(fs, bsect) : 2;	/* Check the partition */
-		} while (!LD2PT(vol) && fmt && ++i < 4);
 	}
-	if (fmt == 3) return FR_DISK_ERR;		/* An error occured in the disk I/O layer */
-	if (fmt) return FR_NO_FILESYSTEM;		/* No FAT volume is found */
 
-	/* An FAT volume is found. Following code initializes the file system object */
+	/* The filesystem object is not valid. */
+	/* Following code attempts to mount the volume. (find an FAT volume, analyze the BPB and initialize the filesystem object) */
 
-	if (LD_WORD(fs->win+BPB_BytsPerSec) != SS(fs))		/* (BPB_BytsPerSec must be equal to the physical sector size) */
-		return FR_NO_FILESYSTEM;
-
-	fasize = LD_WORD(fs->win+BPB_FATSz16);				/* Number of sectors per FAT */
-	if (!fasize) fasize = LD_DWORD(fs->win+BPB_FATSz32);
-	fs->fsize = fasize;
-
-	fs->n_fats = fs->win[BPB_NumFATs];					/* Number of FAT copies */
-	if (fs->n_fats != 1 && fs->n_fats != 2)				/* (Must be 1 or 2) */
-		return FR_NO_FILESYSTEM;
-	fasize *= fs->n_fats;								/* Number of sectors for FAT area */
-
-	fs->csize = fs->win[BPB_SecPerClus];				/* Number of sectors per cluster */
-	if (!fs->csize || (fs->csize & (fs->csize - 1)))	/* (Must be power of 2) */
-		return FR_NO_FILESYSTEM;
-
-	fs->n_rootdir = LD_WORD(fs->win+BPB_RootEntCnt);	/* Number of root directory entries */
-	if (fs->n_rootdir % (SS(fs) / SZ_DIR))				/* (Must be sector aligned) */
-		return FR_NO_FILESYSTEM;
-
-	tsect = LD_WORD(fs->win+BPB_TotSec16);				/* Number of sectors on the volume */
-	if (!tsect) tsect = LD_DWORD(fs->win+BPB_TotSec32);
-
-	nrsv = LD_WORD(fs->win+BPB_RsvdSecCnt);				/* Number of reserved sectors */
-	if (!nrsv) return FR_NO_FILESYSTEM;					/* (Must not be 0) */
-
-	/* Determine the FAT sub type */
-	sysect = nrsv + fasize + fs->n_rootdir / (SS(fs) / SZ_DIR);	/* RSV+FAT+DIR */
-	if (tsect < sysect) return FR_NO_FILESYSTEM;		/* (Invalid volume size) */
-	nclst = (tsect - sysect) / fs->csize;				/* Number of clusters */
-	if (!nclst) return FR_NO_FILESYSTEM;				/* (Invalid volume size) */
-	fmt = FS_FAT12;
-	if (nclst >= MIN_FAT16) fmt = FS_FAT16;
-	if (nclst >= MIN_FAT32) fmt = FS_FAT32;
-
-	/* Boundaries and Limits */
-	fs->n_fatent = nclst + 2;							/* Number of FAT entries */
-	fs->volbase = bsect;								/* Volume start sector */
-	fs->fatbase = bsect + nrsv; 						/* FAT start sector */
-	fs->database = bsect + sysect;						/* Data start sector */
-	if (fmt == FS_FAT32) {
-		if (fs->n_rootdir) return FR_NO_FILESYSTEM;		/* (BPB_RootEntCnt must be 0) */
-		fs->dirbase = LD_DWORD(fs->win+BPB_RootClus);	/* Root directory start cluster */
-		szbfat = fs->n_fatent * 4;						/* (Required FAT size) */
-	} else {
-		if (!fs->n_rootdir)	return FR_NO_FILESYSTEM;	/* (BPB_RootEntCnt must not be 0) */
-		fs->dirbase = fs->fatbase + fasize;				/* Root directory start sector */
-		szbfat = (fmt == FS_FAT16) ?					/* (Required FAT size) */
-			fs->n_fatent * 2 : fs->n_fatent * 3 / 2 + (fs->n_fatent & 1);
+	fs->fs_type = 0;					/* Invalidate the filesystem object */
+	stat = disk_initialize(fs->pdrv);	/* Initialize the volume hosting physical drive */
+	if (stat & STA_NOINIT) { 			/* Check if the initialization succeeded */
+		return FR_NOT_READY;			/* Failed to initialize due to no medium or hard error */
 	}
-	if (fs->fsize < (szbfat + (SS(fs) - 1)) / SS(fs))	/* (BPB_FATSz must not be less than required) */
-		return FR_NO_FILESYSTEM;
+	if (!_FS_READONLY && mode && (stat & STA_PROTECT)) { /* Check disk write protection if needed */
+		return FR_WRITE_PROTECTED;
+	}
+#if _MAX_SS != _MIN_SS				/* Get sector size (multiple sector size cfg only) */
+	if (disk_ioctl(fs->pdrv, GET_SECTOR_SIZE, &SS(fs)) != RES_OK) return FR_DISK_ERR;
+	if (SS(fs) > _MAX_SS || SS(fs) < _MIN_SS || (SS(fs) & (SS(fs) - 1))) return FR_DISK_ERR;
+#endif
+
+	/* Find an FAT volume on the hosting drive */
+	// TODO: Change to res...
+	fmt = find_volume(fs, LD2PT(vol));
+	if (fmt == 4) return FR_DISK_ERR;		/* An error occurred in the disk I/O layer */
+	if (fmt >= 2) return FR_NO_FILESYSTEM;	/* No FAT volume is found */
+	bsect = fs->winsect;					/* Volume offset in the hosting physical drive */
+
+	/* An FAT volume is found (bsect). Following code initializes the filesystem object */
+
+#if _FS_EXFAT
+	if (fmt == 1) {
+		QWORD maxlba;
+		DWORD so, cv, bcl, i;
+
+		for (i = BPB_ZeroedEx; i < BPB_ZeroedEx + 53 && fs->win[i] == 0; i++) ;	/* Check zero filler */
+		if (i < BPB_ZeroedEx + 53) return FR_NO_FILESYSTEM;
+
+		if (ld_word(fs->win + BPB_FSVerEx) != 0x100) return FR_NO_FILESYSTEM;	/* Check exFAT version (must be version 1.0) */
+
+		if (1 << fs->win[BPB_BytsPerSecEx] != SS(fs)) {	/* (BPB_BytsPerSecEx must be equal to the physical sector size) */
+			return FR_NO_FILESYSTEM;
+		}
+
+		maxlba = ld_qword(fs->win + BPB_TotSecEx) + bsect;	/* Last LBA of the volume + 1 */
+		if (!_LBA64 && maxlba >= 0x100000000) return FR_NO_FILESYSTEM;	/* (It cannot be accessed in 32-bit LBA) */
+
+		fs->fsize = ld_dword(fs->win + BPB_FatSzEx);	/* Number of sectors per FAT */
+
+		fs->n_fats = fs->win[BPB_NumFATsEx];			/* Number of FATs */
+		if (fs->n_fats != 1) return FR_NO_FILESYSTEM;	/* (Supports only 1 FAT) */
+
+		fs->csize = 1 << fs->win[BPB_SecPerClusEx];		/* Cluster size */
+		if (fs->csize == 0)	return FR_NO_FILESYSTEM;	/* (Must be 1..32768 sectors) */
+
+		nclst = ld_dword(fs->win + BPB_NumClusEx);		/* Number of clusters */
+		if (nclst > MAX_EXFAT) return FR_NO_FILESYSTEM;	/* (Too many clusters) */
+		fs->n_fatent = nclst + 2;
+
+		/* Boundaries and Limits */
+		fs->volbase = bsect;
+		fs->database = bsect + ld_dword(fs->win + BPB_DataOfsEx);
+		fs->fatbase = bsect + ld_dword(fs->win + BPB_FatOfsEx);
+		if (maxlba < (QWORD)fs->database + nclst * fs->csize) return FR_NO_FILESYSTEM;	/* (Volume size must not be smaller than the size required) */
+		fs->dirbase = ld_dword(fs->win + BPB_RootClusEx);
+
+		/* Get bitmap location and check if it is contiguous (implementation assumption) */
+		so = i = 0;
+		for (;;) {	/* Find the bitmap entry in the root directory (in only first cluster) */
+			if (i == 0) {
+				if (so >= fs->csize) return FR_NO_FILESYSTEM;	/* Not found? */
+				if (move_window(fs, clust2sect(fs, (DWORD)fs->dirbase) + so) != FR_OK) return FR_DISK_ERR;
+				so++;
+			}
+			if (fs->win[i] == ET_BITMAP) break;			/* Is it a bitmap entry? */
+			i = (i + SZ_DIR) % SS(fs);	/* Next entry */
+		}
+		bcl = ld_dword(fs->win + i + 20);				/* Bitmap cluster */
+		if (bcl < 2 || bcl >= fs->n_fatent) return FR_NO_FILESYSTEM;	/* (Wrong cluster#) */
+		fs->bitbase = fs->database + fs->csize * (bcl - 2);	/* Bitmap sector */
+		for (;;) {	/* Check if bitmap is contiguous */
+			if (move_window(fs, fs->fatbase + bcl / (SS(fs) / 4)) != FR_OK) return FR_DISK_ERR;
+			cv = ld_dword(fs->win + bcl % (SS(fs) / 4) * 4);
+			if (cv == 0xFFFFFFFF) break;				/* Last link? */
+			if (cv != ++bcl) return FR_NO_FILESYSTEM;	/* Fragmented bitmap? */
+		}
 
 #if !_FS_READONLY
-	/* Initialize cluster allocation information */
-	fs->last_clust = fs->free_clust = 0xFFFFFFFF;
-
-	/* Get fsinfo if available */
-	fs->fsi_flag = 0x80;
-	if (fmt == FS_FAT32				/* Enable FSINFO only if FAT32 and BPB_FSInfo is 1 */
-		&& LD_WORD(fs->win+BPB_FSInfo) == 1
-		&& move_window(fs, bsect + 1) == FR_OK)
+		fs->last_clst = fs->free_clust = 0xFFFFFFFF;		/* Initialize cluster allocation information */
+#endif
+		fmt = FS_EXFAT;			/* FAT sub-type */
+	} else
+#endif	/* _FS_EXFAT */
 	{
-		fs->fsi_flag = 0;
-		if (LD_WORD(fs->win+BS_55AA) == 0xAA55	/* Load FSINFO data if available */
-			&& LD_DWORD(fs->win+FSI_LeadSig) == 0x41615252
-			&& LD_DWORD(fs->win+FSI_StrucSig) == 0x61417272)
-		{
-#if !_FS_NOFSINFO
-			fs->free_clust = LD_DWORD(fs->win+FSI_Free_Count);
-#endif
-			fs->last_clust = LD_DWORD(fs->win+FSI_Nxt_Free);
+		if (ld_word(fs->win + BPB_BytsPerSec) != SS(fs)) return FR_NO_FILESYSTEM;	/* (BPB_BytsPerSec must be equal to the physical sector size) */
+
+		fasize = ld_word(fs->win + BPB_FATSz16);		/* Number of sectors per FAT */
+		if (fasize == 0) fasize = ld_dword(fs->win + BPB_FATSz32);
+		fs->fsize = fasize;
+
+		fs->n_fats = fs->win[BPB_NumFATs];				/* Number of FATs */
+		if (fs->n_fats != 1 && fs->n_fats != 2) return FR_NO_FILESYSTEM;	/* (Must be 1 or 2) */
+		fasize *= fs->n_fats;							/* Number of sectors for FAT area */
+
+		fs->csize = fs->win[BPB_SecPerClus];			/* Cluster size */
+		if (fs->csize == 0 || (fs->csize & (fs->csize - 1))) return FR_NO_FILESYSTEM;	/* (Must be power of 2) */
+
+		fs->n_rootdir = ld_word(fs->win + BPB_RootEntCnt);	/* Number of root directory entries */
+		if (fs->n_rootdir % (SS(fs) / SZ_DIR)) return FR_NO_FILESYSTEM;	/* (Must be sector aligned) */
+
+		tsect = ld_word(fs->win + BPB_TotSec16);		/* Number of sectors on the volume */
+		if (tsect == 0) tsect = ld_dword(fs->win + BPB_TotSec32);
+
+		nrsv = ld_word(fs->win + BPB_RsvdSecCnt);		/* Number of reserved sectors */
+		if (nrsv == 0) return FR_NO_FILESYSTEM;			/* (Must not be 0) */
+
+		/* Determine the FAT sub type */
+		sysect = nrsv + fasize + fs->n_rootdir / (SS(fs) / SZ_DIR);	/* RSV + FAT + DIR */
+		if (tsect < sysect) return FR_NO_FILESYSTEM;	/* (Invalid volume size) */
+		nclst = (tsect - sysect) / fs->csize;			/* Number of clusters */
+		if (nclst == 0) return FR_NO_FILESYSTEM;		/* (Invalid volume size) */
+		fmt = 0;
+		if (nclst <= MAX_FAT32) fmt = FS_FAT32;
+		if (nclst <= MAX_FAT16) fmt = FS_FAT16;
+		if (nclst <= MAX_FAT12) fmt = FS_FAT12;
+		if (fmt == 0) return FR_NO_FILESYSTEM;
+
+		/* Boundaries and Limits */
+		fs->n_fatent = nclst + 2;						/* Number of FAT entries */
+		fs->volbase = bsect;							/* Volume start sector */
+		fs->fatbase = bsect + nrsv; 					/* FAT start sector */
+		fs->database = bsect + sysect;					/* Data start sector */
+		if (fmt == FS_FAT32) {
+			if (ld_word(fs->win + BPB_FSVer32) != 0) return FR_NO_FILESYSTEM;	/* (Must be FAT32 revision 0.0) */
+			if (fs->n_rootdir != 0) return FR_NO_FILESYSTEM;	/* (BPB_RootEntCnt must be 0) */
+			fs->dirbase = ld_dword(fs->win + BPB_RootClus32);	/* Root directory start cluster */
+			szbfat = fs->n_fatent * 4;					/* (Needed FAT size) */
+		} else {
+			if (fs->n_rootdir == 0)	return FR_NO_FILESYSTEM;	/* (BPB_RootEntCnt must not be 0) */
+			fs->dirbase = fs->fatbase + fasize;			/* Root directory start sector */
+			szbfat = (fmt == FS_FAT16) ?				/* (Needed FAT size) */
+				fs->n_fatent * 2 : fs->n_fatent * 3 / 2 + (fs->n_fatent & 1);
 		}
-	}
+		if (fs->fsize < (szbfat + (SS(fs) - 1)) / SS(fs)) return FR_NO_FILESYSTEM;	/* (BPB_FATSz must not be less than the size needed) */
+
+#if !_FS_READONLY
+		/* Get FSInfo if available */
+		fs->last_clust = fs->free_clust = 0xFFFFFFFF;		/* Initialize cluster allocation information */
+		fs->fsi_flag = 0x80;
+#if (_FS_NOFSINFO & 3) != 3
+		if (fmt == FS_FAT32				/* Allow to update FSInfo only if BPB_FSInfo32 == 1 */
+			&& ld_word(fs->win + BPB_FSInfo32) == 1
+			&& move_window(fs, bsect + 1) == FR_OK)
+		{
+			fs->fsi_flag = 0;
+			if (ld_word(fs->win + BS_55AA) == 0xAA55	/* Load FSInfo data if available */
+				&& ld_dword(fs->win + FSI_LeadSig) == 0x41615252
+				&& ld_dword(fs->win + FSI_StrucSig) == 0x61417272)
+			{
+#if (_FS_NOFSINFO & 1) == 0
+				fs->free_clust = ld_dword(fs->win + FSI_Free_Count);
 #endif
-	fs->fs_type = fmt;	/* FAT sub-type */
-	fs->id = miosix::atomicAddExchange(&Fsid,1)/*++Fsid*/;	/* File system mount ID */
-#if _FS_RPATH
-	fs->cdir = 0;		/* Current directory (root dir) */
+#if (_FS_NOFSINFO & 2) == 0
+				fs->last_clust = ld_dword(fs->win + FSI_Nxt_Free);
+#endif
+			}
+		}
+#endif	/* (_FS_NOFSINFO & 3) != 3 */
+#endif	/* !_FS_READONLY */
+	}
+
+	fs->fs_type = (BYTE)fmt;/* FAT sub-type (the filesystem object gets valid) */
+	fs->id = ++Fsid;		/* Volume mount ID */
+#if _USE_LFN == 1
+	fs->lfnbuf = LfnBuf;	/* Static LFN working buffer */
+#if _FS_EXFAT
+	fs->dirbuf = DirBuf;	/* Static directory block scratchpad buuffer */
+#endif
 #endif
 #ifdef _FS_LOCK			/* Clear file lock semaphores */
 	clear_lock(fs);
+#if _FS_RPATH != 0
+	fs->cdir = 0;			/* Initialize current directory */
 #endif
-
+#if _FS_LOCK				/* Clear file lock semaphores */
+	clear_share(fs);
+#endif
 	return FR_OK;
 }
-
 
 
 
@@ -3650,23 +4021,33 @@ FRESULT find_volume (	/* FR_OK(0): successful, !=0: any error occurred */
 /* Check if the file/directory object is valid or not                    */
 /*-----------------------------------------------------------------------*/
 
-static
-FRESULT validate (	/* FR_OK(0): The object is valid, !=0: Invalid */
-	void* obj		/* Pointer to the object FIL/DIR to check validity */
+static FRESULT validate (	/* Returns FR_OK or FR_INVALID_OBJECT */
+	FFOBJID* obj,			/* Pointer to the FFOBJID, the 1st member in the FIL/DIR structure, to check validity */
+	FATFS** rfs				/* Pointer to pointer to the owner filesystem object to return */
 )
 {
-	FIL *fil = (FIL*)obj;	/* Assuming offset of .fs and .id in the FIL/DIR structure is identical */
+	FRESULT res = FR_INVALID_OBJECT;
 
 
-	if (!fil || !fil->fs || !fil->fs->fs_type || fil->fs->id != fil->id)
-		return FR_INVALID_OBJECT;
-
-	ENTER_FF(fil->fs);		/* Lock file system */
-
-	//if (disk_status(fil->fs->drv) & STA_NOINIT)
-	//	return FR_NOT_READY;
-
-	return FR_OK;
+	if (obj && obj->fs && obj->fs->fs_type && obj->id == obj->fs->id) {	/* Test if the object is valid */
+#if _FS_REENTRANT
+		if (lock_volume(obj->fs, 0)) {	/* Take a grant to access the volume */
+			if (!(disk_status(obj->fs->pdrv) & STA_NOINIT)) { /* Test if the hosting phsical drive is kept initialized */
+				res = FR_OK;
+			} else {
+				unlock_volume(obj->fs, FR_OK);	/* Invalidated volume, abort to access */
+			}
+		} else {	/* Could not take */
+			res = FR_TIMEOUT;
+		}
+#else
+		if (!(disk_status(obj->fs->pdrv) & STA_NOINIT)) { /* Test if the hosting phsical drive is kept initialized */
+			res = FR_OK;
+		}
+#endif
+	}
+	*rfs = (res == FR_OK) ? obj->fs : 0;	/* Return corresponding filesystem object if it is valid */
+	return res;
 }
 
 
