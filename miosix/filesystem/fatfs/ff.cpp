@@ -3829,7 +3829,7 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 
 	mode &= (BYTE)~FA_READ;				/* Desired access mode, write access or not */
 	if (fs->fs_type != 0) {				/* If the volume has been mounted */
-		stat = disk_status(fs->pdrv);
+		stat = FR_OK; // disk_status(fs->pdrv);
 		if (!(stat & STA_NOINIT)) {		/* and the physical drive is kept initialized */
 			if (!_FS_READONLY && mode && (stat & STA_PROTECT)) {	/* Check write protection if needed */
 				return FR_WRITE_PROTECTED;
@@ -3842,7 +3842,9 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 	/* Following code attempts to mount the volume. (find an FAT volume, analyze the BPB and initialize the filesystem object) */
 
 	fs->fs_type = 0;					/* Invalidate the filesystem object */
-	stat = disk_initialize(fs->pdrv);	/* Initialize the volume hosting physical drive */
+	//stat = disk_initialize(fs->pdrv);	/* Initialize the volume hosting physical drive */
+	stat = RES_OK;
+
 	if (stat & STA_NOINIT) { 			/* Check if the initialization succeeded */
 		return FR_NOT_READY;			/* Failed to initialize due to no medium or hard error */
 	}
@@ -4038,18 +4040,18 @@ static FRESULT validate (	/* Returns FR_OK or FR_INVALID_OBJECT */
 	if (obj && obj->fs && obj->fs->fs_type && obj->id == obj->fs->id) {	/* Test if the object is valid */
 #if _FS_REENTRANT
 		if (lock_volume(obj->fs, 0)) {	/* Take a grant to access the volume */
-			if (!(disk_status(obj->fs->pdrv) & STA_NOINIT)) { /* Test if the hosting phsical drive is kept initialized */
+			//if (!(disk_status(obj->fs->pdrv) & STA_NOINIT)) { /* Test if the hosting phsical drive is kept initialized */
 				res = FR_OK;
-			} else {
-				unlock_volume(obj->fs, FR_OK);	/* Invalidated volume, abort to access */
-			}
+			//} else {
+			//	unlock_volume(obj->fs, FR_OK);	/* Invalidated volume, abort to access */
+			//}
 		} else {	/* Could not take */
 			res = FR_TIMEOUT;
 		}
 #else
-		if (!(disk_status(obj->fs->pdrv) & STA_NOINIT)) { /* Test if the hosting phsical drive is kept initialized */
+		//if (!(disk_status(obj->fs->pdrv) & STA_NOINIT)) { /* Test if the hosting phsical drive is kept initialized */
 			res = FR_OK;
-		}
+		//}
 #endif
 	}
 	*rfs = (res == FR_OK) ? obj->fs : 0;	/* Return corresponding filesystem object if it is valid */
@@ -6100,7 +6102,7 @@ FRESULT f_mkfs (
 	DWORD sz_rsv, sz_fat, sz_dir, sz_au;	/* Size of reserved, fat, dir, data, cluster */
 	UINT n_fat, n_root, i;					/* Index, Number of FATs and Number of roor dir entries */
 	int vol;
-	DSTATUS ds;
+	//DSTATUS ds;
 	FRESULT res;
 
 
@@ -6113,9 +6115,10 @@ FRESULT f_mkfs (
 	ipart = LD2PT(vol);		/* Hosting partition (0:create as new, 1..:existing partition) */
 
 	/* Initialize the hosting physical drive */
-	ds = disk_initialize(pdrv);
-	if (ds & STA_NOINIT) return FR_NOT_READY;
-	if (ds & STA_PROTECT) return FR_WRITE_PROTECTED;
+	//ds = disk_initialize(pdrv);
+	
+	//if (ds & STA_NOINIT) return FR_NOT_READY;
+	//if (ds & STA_PROTECT) return FR_WRITE_PROTECTED;
 
 	/* Get physical drive parameters (sz_drv, sz_blk and ss) */
 	if (!opt) opt = &defopt;	/* Use default parameter if it is not given */
@@ -6592,14 +6595,14 @@ FRESULT f_fdisk (
 )
 {
 	BYTE *buf = (BYTE*)work;
-	DSTATUS stat;
+	//DSTATUS stat;
 	FRESULT res;
 
 
 	/* Initialize the physical drive */
-	stat = disk_initialize(pdrv);
-	if (stat & STA_NOINIT) return FR_NOT_READY;
-	if (stat & STA_PROTECT) return FR_WRITE_PROTECTED;
+	//stat = disk_initialize(pdrv);
+	//if (stat & STA_NOINIT) return FR_NOT_READY;
+	//if (stat & STA_PROTECT) return FR_WRITE_PROTECTED;
 
 #if _USE_LFN == 3
 	if (!buf) buf = ff_memalloc(_MAX_SS);	/* Use heap memory for working buffer */
