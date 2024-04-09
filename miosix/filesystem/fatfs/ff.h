@@ -346,7 +346,8 @@ FRESULT f_stat (FATFS* fs, const /*TCHAR*/ char* path, FILINFO* fno);						 /* G
 FRESULT f_chmod (FATFS* fs, const /*TCHAR*/ char* path, BYTE value, BYTE mask);				 /* Change attribute of the file/dir */
 FRESULT f_utime (FATFS* fs, const /*TCHAR*/ char* path, const FILINFO* fno);				 /* Change times-tamp of the file/dir */
 FRESULT f_chdir (FATFS* fs, const TCHAR* path);												 /* Change current directory */
-FRESULT f_chdrive (const TCHAR* path);														 /* Change current drive */
+// NOTE: Removed, since the multi-partition and multi-drive aspects will be managed by Miosix
+//FRESULT f_chdrive (const TCHAR* path);														 /* Change current drive */ 
 FRESULT f_getcwd( FATFS* fs, TCHAR *buff, UINT len);										 /* Get current directory */
 FRESULT f_getfree (FATFS* fs, /*const TCHAR* path,*/ DWORD* nclst /*, FATFS** fatfs*/);		 /* Get number of free clusters on the drive */
 FRESULT f_getlabel (FATFS* fs, const TCHAR* path, TCHAR* label, DWORD* sn);					 /* Get volume label */
