@@ -469,11 +469,6 @@ void _mutex_give(int vol);	 /* Unlock sync object */
 #define AM_MASK	0x3F	/* Mask of defined bits */
 
 
-/* Fast seek feature */
-#define CREATE_LINKMAP	0xFFFFFFFF
-
-
-
 /*--------------------------------*/
 /* Multi-byte word access macros  */
 
