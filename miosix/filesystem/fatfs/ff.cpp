@@ -2140,7 +2140,7 @@ static FRESULT dir_next (	/* FR_OK(0):succeeded, FR_NO_FILE:End of table, FR_DEN
 	int stretch		/* 0: Do not stretch table, 1: Stretch table if needed */
 )
 {
-	DWORD ofs, clst;
+	DWORD clst;
 	FATFS *fs = dp->obj.fs;
 	WORD i;
 
@@ -2365,9 +2365,6 @@ void gen_numname (
 {
 	BYTE ns[8], c;
 	UINT i, j;
-	WCHAR wc;
-	DWORD sreg;
-
 
 	memcpy(dst, src, 11);	/* Prepare the SFN to be modified */
 
@@ -2963,8 +2960,8 @@ static FRESULT create_name (	/* FR_OK: successful, FR_INVALID_NAME: could not cr
 	WCHAR *lfn;
     char32_t w;
 	UINT i, ni, si, di;
-	const /*TCHAR*/char *p;
-	DWORD uc;
+	//const /*TCHAR*/char *p;
+	//DWORD uc;
 
 	/* Create LFN into LFN working buffer */
 	//p = *path; lfn = dp->obj.fs->lfnbuf; di = 0;
@@ -5430,6 +5427,7 @@ FRESULT f_unlink (
 
 	/* Get logical drive */
 	//res = mount_volume(&path, &fs, FA_WRITE);
+	res = find_volume(fs, 0).res;
 	if (res == FR_OK) {
 		dj.obj.fs = fs;
 		INIT_NAMBUF(fs);
