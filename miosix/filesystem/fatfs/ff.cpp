@@ -3751,8 +3751,10 @@ static FIND_RETURN find_volume (	/* Returns BS status found in the hosting drive
 	//if (fmt != 2 && (fmt >= 3 || part == 0)) return fmt;	/* Returns if it is an FAT VBR as auto scan, not a BS or disk error */
 	if(fmt ==4) 
 		return {FR_DISK_ERR, fmt};
-	if(fmt >=2)
+	if(fmt >2)
 		return {FR_NO_FILESYSTEM, fmt};
+	if(fmt!=2 && part == 0)
+		return {FR_OK, fmt};	
 
 
 	/* Sector 0 is not an FAT VBR or forced partition number wants a partition */
@@ -3763,7 +3765,7 @@ static FIND_RETURN find_volume (	/* Returns BS status found in the hosting drive
 		QWORD pt_lba;
 
 		if (move_window(fs, 1) != FR_OK) return {FR_DISK_ERR, 4};	/* Load GPT header sector (next to MBR) */
-		if (!test_gpt_header(fs->win)) return {FR_DISK_ERR, 3};	/* Check if GPT header is valid */
+		if (!test_gpt_header(fs->win)) return {FR_NO_FILESYSTEM, 3};	/* Check if GPT header is valid */
 		n_ent = ld_dword(fs->win + GPTH_PtNum);		/* Number of entries */
 		pt_lba = ld_qword(fs->win + GPTH_PtOfs);	/* Table location */
 		for (v_ent = i = 0; i < n_ent; i++) {		/* Find FAT partition */
@@ -3788,6 +3790,8 @@ static FIND_RETURN find_volume (	/* Returns BS status found in the hosting drive
 	do {							/* Find an FAT volume */
 		fmt = mbr_pt[i] ? check_fs(fs, mbr_pt[i]) : 3;	/* Check if the partition is FAT */
 	} while (part == 0 && fmt >= 2 && ++i < 4);
+	if(fmt == 3)
+		return {FR_NO_FILESYSTEM, fmt};
 	return {FR_OK, fmt};
 }
 
