@@ -1026,7 +1026,7 @@ static int lock_volume (	/* 1:Ok, 0:timeout */
 	int rv;
 
 
-#if _FS_LOCK
+#ifdef _FS_LOCK
 	rv = _mutex_take(fs->ldrv);	/* Lock the volume */
 	if (rv && syslock) {			/* System lock reqiered? */
 		rv = _mutex_take(_VOLUMES);	/* Lock the system */
@@ -1050,7 +1050,7 @@ static void unlock_volume (
 )
 {
 	if (fs && res != FR_NOT_ENABLED && res != FR_INVALID_DRIVE && res != FR_TIMEOUT) {
-#if _FS_LOCK
+#ifdef _FS_LOCK
 		if (SysLock == 2 && SysLockVolume == fs->ldrv) {	/* Unlock system if it has been locked by this task */
 			SysLock = 1;
 			_mutex_give(_VOLUMES);
@@ -1100,7 +1100,7 @@ static FRESULT chk_share (	/* Check if the file can be accessed */
 
 	/* Search open object table for the object */
 	be = 0;
-	for (i = 0; i < _FS_LOCK; i++) {
+	for (i = be = 0; i < miosix::FATFS_MAX_OPEN_FILES; i++) { 
 		if (dp->obj.fs->Files[i].fs) {	/* Existing entry */
 			if (dp->obj.fs->Files[i].fs == dp->obj.fs &&	 	/* Check if the object matches with an open object */
 				dp->obj.fs->Files[i].clu == dp->obj.sclust &&
@@ -1109,9 +1109,8 @@ static FRESULT chk_share (	/* Check if the file can be accessed */
 			be = 1;
 		}
 	}
-	if (i == _FS_LOCK) {	/* The object has not been opened */
+	if (i == miosix::FATFS_MAX_OPEN_FILES)	/* The object is not opened */ 
 		return (!be && acc != 2) ? FR_TOO_MANY_OPEN_FILES : FR_OK;	/* Is there a blank entry for new object? */
-	}
 
 	/* The object was opened. Reject any open against writing file and all write mode open */
 	return (acc != 0 || dp->obj.fs->Files[i].ctr == 0x100) ? FR_LOCKED : FR_OK;
@@ -1122,8 +1121,8 @@ static int enq_share (DIR_* dp)	/* Check if an entry is available for a new obje
 {
 	UINT i;
 
-	for (i = 0; i < _FS_LOCK && dp->obj.fs->Files[i].fs; i++) ;	/* Find a free entry */
-	return (i == _FS_LOCK) ? 0 : 1;
+	for (i = 0; i < miosix::FATFS_MAX_OPEN_FILES && dp->obj.fs->Files[i].fs; i++) ; 
+	return (i == miosix::FATFS_MAX_OPEN_FILES) ? 0 : 1; 
 }
 
 
@@ -1135,15 +1134,15 @@ static UINT inc_share (	/* Increment object open counter and returns its index (
 	UINT i;
 
 
-	for (i = 0; i < _FS_LOCK; i++) {	/* Find the object */
+	for (i = 0; i < miosix::FATFS_MAX_OPEN_FILES; i++) {	/* Find the object */ 
 		if (dp->obj.fs->Files[i].fs == dp->obj.fs
 		 && dp->obj.fs->Files[i].clu == dp->obj.sclust
 		 && dp->obj.fs->Files[i].idx == dp->dptr) break;
 	}
 
-	if (i == _FS_LOCK) {			/* Not opened. Register it as new. */
-		for (i = 0; i < _FS_LOCK && dp->obj.fs->Files[i].fs; i++) ;	/* Find a free entry */
-		if (i == _FS_LOCK) return 0;	/* No free entry to register (int err) */
+	if (i == miosix::FATFS_MAX_OPEN_FILES) {				/* Not opened. Register it as new. */ 
+		for (i = 0; i < miosix::FATFS_MAX_OPEN_FILES && dp->obj.fs->Files[i].fs; i++) ; 
+		if (i == miosix::FATFS_MAX_OPEN_FILES) return 0;	/* No free entry to register (int err) */ 
 
 		// CHANGES: dp->obj.fs->Files and not Files static data structure
 		dp->obj.fs->Files[i].fs = dp->obj.fs;
@@ -1169,7 +1168,7 @@ static FRESULT dec_share (	/* Decrement object open counter */
 	FRESULT res;
 
 
-	if (--i < _FS_LOCK) {	/* Index number origin from 0 */
+	if (--i < miosix::FATFS_MAX_OPEN_FILES) {	/* Shift index number origin from 0 */ 
 		n = fs->Files[i].ctr;
 		if (n == 0x100) n = 0;	/* If write mode open, delete the object semaphore */
 		if (n > 0) n--;			/* Decrement read mode open count */
@@ -1191,7 +1190,7 @@ static void clear_share (	/* Clear all lock entries of the volume */
 {
 	UINT i;
 
-	for (i = 0; i < _FS_LOCK; i++) {
+	for (i = 0; i < miosix::FATFS_MAX_OPEN_FILES; i++) { 
 		if (fs->Files[i].fs == fs) fs->Files[i].fs = 0;
 	}
 }
@@ -1244,9 +1243,9 @@ static UINT inc_lock (	/* Increment object open counter and returns its index (0
 			dp->obj.fs->Files[i].idx == dp->index) break;
 	}
 
-	if (i == miosix::FATFS_MAX_OPEN_FILES) {				/* Not opened. Register it as new. */
-		for (i = 0; i < _FS_LOCK && dp->obj.fs->Files[i].fs; i++) ;
-		if (i == _FS_LOCK) return 0;	/* No free entry to register (int err) */
+	if (i == miosix::FATFS_MAX_OPEN_FILES) {				/* Not opened. Register it as new. */ 
+		for (i = 0; i < miosix::FATFS_MAX_OPEN_FILES && dp->obj.fs->Files[i].fs; i++) ; 
+		if (i == miosix::FATFS_MAX_OPEN_FILES) return 0;	/* No free entry to register (int err) */ 
 		dp->obj.fs->Files[i].clu = dp->obj.sclust;
 		dp->obj.fs->Files[i].fs = dp->obj.fs;
 		dp->obj.fs->Files[i].idx = dp->index;
