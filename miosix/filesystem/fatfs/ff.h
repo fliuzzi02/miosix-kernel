@@ -215,7 +215,7 @@ typedef struct {
 	BYTE	err;			/* Abort flag (error code) */
 	FSIZE_t fptr;			/* File read/write pointer (Zeroed on file open) */
 	DWORD	fsize;			/* File size */
-	//DWORD	sclust;			// Now included in te FFOBJID
+	//DWORD	sclust;			// Now included in the FFOBJID
 	DWORD	clust;			/* Current cluster of fpter (invalid when fptr is 0) */
 	LBA_t	dsect;			/* Current data sector of fpter */
 	FFOBJID obj; 			/* Object identifier (must be the 1st member to detect invalid object pointer) */
@@ -228,7 +228,7 @@ typedef struct {
 	DWORD*	cltbl;			/* Pointer to the cluster link map table (Nulled on file open, set by application) */
 #endif
 #ifdef _FS_LOCK
-	UINT	lockid;			/* File lock ID (index of file semaphore table Files[]) */
+	//UINT	lockid;			// Now included in FFOBJID
 #endif
 #if !_FS_TINY
 	BYTE	buf[_MAX_SS];	/* File private data read/write window */
