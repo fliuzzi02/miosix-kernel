@@ -66,27 +66,6 @@ extern PARTITION VolToPart[];	/* Volume - Partition resolution table */
 
 #endif
 
-	/* Type of file size and LBA variables */
-
-#if FF_FS_EXFAT
-#if FF_INTDEF != 2
-#error exFAT feature wants C99 or later
-#endif
-	typedef QWORD FSIZE_t;
-#if FF_LBA64
-	typedef QWORD LBA_t;
-#else
-	typedef DWORD LBA_t;
-#endif
-#else
-#if FF_LBA64
-#error exFAT needs to be enabled when enable 64-bit LBA
-#endif
-typedef DWORD FSIZE_t;
-typedef DWORD LBA_t;
-#endif
-
-
 /* Type of path name strings on FatFs API */
 
 #if _LFN_UNICODE			/* Unicode string */
@@ -286,6 +265,17 @@ typedef struct {
 
 /* Format parameter structure (MKFS_PARM) */
 
+/**
+ * @brief Format option enum
+ * 
+ */
+enum class FMT : BYTE{
+FM_FAT, 
+FM_FAT32, 
+FM_EXFAT, 
+FM_SFD
+};
+
 typedef struct
 {
 	BYTE fmt;	   /* Format option (FM_FAT, FM_FAT32, FM_EXFAT and FM_SFD) */
@@ -298,7 +288,8 @@ typedef struct
 
 /* File function return code (FRESULT) */
 
-typedef enum {
+// TODO: Consider using enum class
+enum FRESULT {
 	FR_OK = 0,				/* (0) Succeeded */
 	FR_DISK_ERR,			/* (1) A hard error occurred in the low level disk I/O layer */
 	FR_INT_ERR,				/* (2) Assertion failed */
@@ -319,7 +310,7 @@ typedef enum {
 	FR_NOT_ENOUGH_CORE,		/* (17) LFN working buffer could not be allocated */
 	FR_TOO_MANY_OPEN_FILES, /* (18) Number of open files > _FS_LOCK */
 	FR_INVALID_PARAMETER	/* (19) Given parameter is invalid */
-} FRESULT;
+}; 
 
 
 
