@@ -2101,7 +2101,7 @@ static DWORD xsum32 (	/* Returns 32-bit checksum */
 	return sum;
 }
 #endif
-
+#endif
 
 /*-----------------------------------------------------------------------*/
 /* Directory handling - Fill a cluster with zeros                        */
@@ -2376,6 +2376,7 @@ void gen_numname (
 /*------------------------------------*/
 /* exFAT: Get a directory entry block */
 /*------------------------------------*/
+#if _FS_EXFAT
 
 static FRESULT load_xdir (	/* FR_INT_ERR: invalid entry block */
 	DIR_* dp					/* Reading directory object pointing top of the entry block to load */
