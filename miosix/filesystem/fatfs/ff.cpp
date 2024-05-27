@@ -6303,7 +6303,8 @@ FRESULT f_mkfs (
 	static const WORD cst[] = {1, 4, 16, 64, 256, 512, 0};	/* Cluster size boundary for FAT volume (4Ks unit) */
 	static const WORD cst32[] = {1, 2, 4, 8, 16, 32, 0};	/* Cluster size boundary for FAT32 volume (128Ks unit) */
 	static const MKFS_PARM defopt = {FM_ANY, 0, 0, 0, 0};	/* Default parameter */
-	BYTE fsopt, fsty, sys, pdrv, ipart;
+	miosix::intrusive_ref_ptr<miosix::FileBase> pdrv;
+	BYTE fsopt, fsty, sys, ipart;
 	BYTE *buf;
 	BYTE *pte;
 	WORD ss;	/* Sector size */
@@ -6318,11 +6319,11 @@ FRESULT f_mkfs (
 
 
 	/* Check mounted drive and clear work area */
-	vol = get_ldnumber(&path);					/* Get target logical drive */
+	vol = fs->id;					/* Get target logical drive */
 	if (vol < 0) return FR_INVALID_DRIVE;
 	//if (FatFs[vol]) FatFs[vol]->fs_type = 0;	/* Clear the fs object if mounted */
 	if(fs) fs->fs_type = 0;
-	pdrv = LD2PD(vol);		/* Hosting physical drive */
+	pdrv = fs->drv;		/* Hosting physical drive */
 	ipart = LD2PT(vol);		/* Hosting partition (0:create as new, 1..:existing partition) */
 
 	/* Initialize the hosting physical drive */
