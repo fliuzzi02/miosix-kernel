@@ -456,6 +456,12 @@ public:
      * Umount all filesystems, to be called before system shutdown or reboot
      */
     void umountAll();
+
+    /**
+     * Create a fat32 filesystem on the device
+     * \param deviceName device name
+     */
+    int mkfat32(const char* deviceName);
     
     #ifdef WITH_DEVFS
     /**

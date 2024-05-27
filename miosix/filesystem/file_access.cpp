@@ -731,6 +731,20 @@ void FilesystemManager::umountAll()
     filesystems.clear();
 }
 
+int FilesystemManager::mkfat32(const char* devicePath) {
+    intrusive_ref_ptr<FileBase> file;
+    intrusive_ref_ptr<DevFs> devFs = getDevFs();
+    string path = string(devicePath);
+    ResolvedPath openData=FilesystemManager::instance().resolvePath(path);
+
+    if(openData.result<0) return openData.result;
+    StringPart sp(path,string::npos,openData.off);
+    devFs.get()->open(file, sp, O_RDWR, 0);
+    
+    // TODO: Here maybe use swith case to choose the filesystem
+    return Fat32Fs::mkfs(file);
+}
+
 ResolvedPath FilesystemManager::resolvePath(string& path, bool followLastSymlink)
 {
     //see man path_resolution. This code supports arbitrarily mounted
