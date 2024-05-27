@@ -57,6 +57,13 @@ private:
     SDIODriver();
     
     FastMutex mutex;
+
+    unsigned int cardSize;//Kbytes
+    unsigned int sectorSize;//Kbytes
+    unsigned int sectorCount;
+    unsigned int blockSize;//bytes
+
+    void calculateCardData(unsigned int csdResponse[4]);
 };
 
 } //namespace miosix
