@@ -99,6 +99,12 @@ public:
      * \return 0 on success, or a negative number on failure
      */
     virtual int mkdir(StringPart& name, int mode);
+
+    /**
+     * Create a FATFS instance
+     * \param file the file object will be stored here, if the call succeeds
+    */
+    static int mkfs(intrusive_ref_ptr<FileBase> file);
     
     /**
      * Remove a directory if empty
