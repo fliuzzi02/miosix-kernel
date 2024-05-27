@@ -264,7 +264,7 @@
 /  and reduce code size.
 */
 
-#define _FS_EXFAT		0
+#define _FS_EXFAT		1
 /* This option switches support for exFAT filesystem. (0:Disable or 1:Enable)
 /  To enable exFAT, also LFN needs to be enabled. (_USE_LFN >= 1)
 /  Note that enabling exFAT discards ANSI C (C89) compatibility. */
