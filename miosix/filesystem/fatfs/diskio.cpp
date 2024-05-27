@@ -88,9 +88,17 @@ DRESULT disk_ioctl (
         case CTRL_SYNC:
             if(pdrv->ioctl(IOCTL_SYNC,0)==0) return RES_OK; else return RES_ERROR;
         case GET_SECTOR_COUNT:
-            return RES_ERROR; //unimplemented, so f_mkfs() does not work
+            unsigned long long volume_size;
+            unsigned int block_size;
+            unsigned long long block_count;
+            if(pdrv->ioctl(IOCTL_GET_VOLUME_SIZE,&volume_size) < 0) return RES_ERROR;
+            if(pdrv->ioctl(IOCTL_GET_READ_SIZE,&block_size) < 0) return RES_ERROR;
+            block_count = volume_size / block_size;
+            *(unsigned int*)buff = (unsigned int)block_count;
+            return RES_OK;
         case GET_BLOCK_SIZE:
-            return RES_ERROR; //unimplemented, so f_mkfs() does not work
+        case GET_SECTOR_SIZE:
+            if(pdrv->ioctl(IOCTL_GET_READ_SIZE,buff)==0) return RES_OK; else return RES_ERROR;
         default:
             return RES_PARERR;
     }
