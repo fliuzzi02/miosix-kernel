@@ -37,6 +37,14 @@ enum Ioctl
     IOCTL_TCSETATTR_FLUSH=103,
     IOCTL_TCSETATTR_DRAIN=104,
     IOCTL_FLUSH=105
+    //Get the read size in bytes as a 32 bit unsigned integer
+    IOCTL_GET_READ_SIZE = 106,
+    //Get the read size in bytes as a 32 bit unsigned integer
+    IOCTL_GET_WRITE_SIZE = 107,
+    //Get the erase size in bytes as a 32 bit unsigned integer
+    IOCTL_GET_ERASE_SIZE = 108,
+    //Get the size of the volume in bytes as a 64bit unsigned integer
+    IOCTL_GET_VOLUME_SIZE = 109
 };
 
 }
