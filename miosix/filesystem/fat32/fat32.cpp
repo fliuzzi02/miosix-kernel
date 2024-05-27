@@ -568,9 +568,9 @@ int Fat32Fs::mkfs(intrusive_ref_ptr<FileBase> file)
     param.align = 0;
     param.n_root = 0;
     param.au_size = 0;
-    UINT len = 512;
+    BYTE work[512];
 
-    return translateError(f_mkfs(&local, &param, nullptr, len));
+    return translateError(f_mkfs(&local, &param, work, sizeof(work)));
 }
 
 int Fat32Fs::rmdir(StringPart& name)
